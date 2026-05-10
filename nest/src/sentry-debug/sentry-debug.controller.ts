@@ -2,6 +2,8 @@ import { Controller, Get } from '@nestjs/common';
 
 import { LocalOnly } from '@app/nest/guards';
 
+import { Temporal } from '@js-temporal/polyfill';
+
 /**
  * Sentry Debug Controller
  *
@@ -50,7 +52,9 @@ export class SentryDebugController {
       return { success: false, message: 'SENTRY_DSN not set' };
     }
 
-    const error = new Error(`[Sentry Test] triggered at ${new Date().toISOString()}`);
+    const error = new Error(
+      `[Sentry Test] triggered at ${Temporal.Now.instant().toString({ smallestUnit: 'millisecond' })}`,
+    );
     Sentry.captureException(error);
 
     return { success: true, message: 'Test error sent to Sentry' };

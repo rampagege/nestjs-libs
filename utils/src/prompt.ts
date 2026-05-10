@@ -1,7 +1,7 @@
 import { normalizeTimezone } from './datetime';
 
+import { Temporal } from '@js-temporal/polyfill';
 import dedent from 'dedent';
-import { DateTime } from 'luxon';
 import { z } from 'zod';
 
 export function generateJsonFormat(schema: z.ZodType, indent = 0): string {
@@ -15,10 +15,9 @@ export function generateJsonFormat(schema: z.ZodType, indent = 0): string {
 }
 
 /**
- * Luxon toFormat patterns（不含 dayPeriod 和时区，由 formatLocalDateTime 拼接）。
+ * Temporal formatting patterns（不含 dayPeriod 和时区，由 formatLocalDateTime 拼接）。
  *
  * dayPeriod 通过 Intl toLocaleString({ dayPeriod: 'long' }) 获取（"in the morning" 等）。
- * 时区通过 Luxon z token 获取（"Asia/Tokyo" 等）。
  */
 export enum TimeSensitivity {
   Day = 'yyyy-MM-dd EEEE',
@@ -26,28 +25,60 @@ export enum TimeSensitivity {
   Minute = 'yyyy-MM-dd EEEE HH:mm',
 }
 
+type PromptDateTime = string | Temporal.Instant | Temporal.ZonedDateTime;
+const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
+
 /**
- * 将 ISO datetime 字符串或 Date 格式化为带时区和 dayPeriod 的可读时间。
+ * 将 ISO datetime 字符串或 Temporal 时间格式化为带时区和 dayPeriod 的可读时间。
  *
  * 输出示例：`2026-03-21 Saturday 04:20 in the morning (Asia/Tokyo)`
  *
  * 默认使用 process.env.TZ 作为时区。
  * 用于 prompt 中展示时间给 LLM，避免 UTC 导致的时间误判。
  */
-/**
- * 将 ISO/Date 转为指定时区的 Luxon DateTime。
- * 所有 prompt 时间格式化函数的共享基础。
- */
-function toLuxonDt(dateOrIso?: string | Date | null, timezone?: string | null): DateTime {
+function toTemporalZdt(dateOrIso?: PromptDateTime | null, timezone?: string | null): Temporal.ZonedDateTime {
   const raw = timezone ?? process.env.TZ;
-  const tz = normalizeTimezone(raw) ?? 'local';
-  // Luxon 需要 "UTC+8" 格式，normalizeTimezone 输出 "+08:00"，加 UTC 前缀
-  const luxonZone = /^[+-]\d/.test(tz) ? `UTC${tz}` : tz;
-  return (
-    dateOrIso
-      ? DateTime.fromJSDate(new Date(typeof dateOrIso === 'string' ? dateOrIso : dateOrIso.getTime()))
-      : DateTime.now()
-  ).setZone(luxonZone);
+  const tz = normalizeTimezone(raw) ?? Temporal.Now.timeZoneId();
+
+  if (!dateOrIso) return Temporal.Now.instant().toZonedDateTimeISO(tz);
+  if (dateOrIso instanceof Temporal.ZonedDateTime) return dateOrIso.withTimeZone(tz);
+
+  const instant = typeof dateOrIso === 'string' ? Temporal.Instant.from(dateOrIso) : dateOrIso;
+  return instant.toZonedDateTimeISO(tz);
+}
+
+function formatZoneName(zdt: Temporal.ZonedDateTime): string {
+  const tz = zdt.timeZoneId;
+  const offset = /^([+-])(\d{2}):(\d{2})$/.exec(tz);
+  if (!offset) return tz;
+
+  const [, sign, hour, minute] = offset;
+  const hourText = String(Number(hour));
+  const minuteText = minute === '00' ? '' : `:${minute}`;
+  return `UTC${sign}${hourText}${minuteText}`;
+}
+
+function formatTemporal(zdt: Temporal.ZonedDateTime, sensitivity: TimeSensitivity): string {
+  const date = `${zdt.year.toString().padStart(4, '0')}-${zdt.month.toString().padStart(2, '0')}-${zdt.day.toString().padStart(2, '0')}`;
+  const weekday = WEEKDAYS[zdt.dayOfWeek - 1];
+  const hour24 = zdt.hour.toString().padStart(2, '0');
+  const minute = zdt.minute.toString().padStart(2, '0');
+
+  if (sensitivity === TimeSensitivity.Day) return `${date} ${weekday}`;
+  if (sensitivity === TimeSensitivity.Hour) {
+    const hour12 = (zdt.hour % 12 || 12).toString().padStart(2, '0');
+    const period = zdt.hour < 12 ? 'AM' : 'PM';
+    return `${date} ${weekday} ${hour12} ${period}`;
+  }
+  return `${date} ${weekday} ${hour24}:${minute}`;
+}
+
+function formatDayPeriod(zdt: Temporal.ZonedDateTime): string {
+  if (zdt.hour < 12) return 'in the morning';
+  if (zdt.hour === 12 && zdt.minute === 0 && zdt.second === 0 && zdt.millisecond === 0) return 'noon';
+  if (zdt.hour < 18) return 'in the afternoon';
+  if (zdt.hour < 21) return 'in the evening';
+  return 'at night';
 }
 
 /**
@@ -56,14 +87,14 @@ function toLuxonDt(dateOrIso?: string | Date | null, timezone?: string | null): 
  * 用于 prompt 的 `Now:` 行、时间提取基准等需要完整时间+时区的场景。
  */
 export function formatLocalDateTime(
-  dateOrIso?: string | Date | null,
+  dateOrIso?: PromptDateTime | null,
   sensitivity: TimeSensitivity = TimeSensitivity.Minute,
   timezone?: string | null,
 ): string {
-  const dt = toLuxonDt(dateOrIso, timezone);
-  const main = dt.toFormat(sensitivity);
-  const dayPeriod = dt.toLocaleString({ dayPeriod: 'long' }, { locale: 'en' });
-  const zone = dt.toFormat('z');
+  const dt = toTemporalZdt(dateOrIso, timezone);
+  const main = formatTemporal(dt, sensitivity);
+  const dayPeriod = formatDayPeriod(dt);
+  const zone = formatZoneName(dt);
   return `${main} ${dayPeriod} (${zone})`;
 }
 
@@ -73,8 +104,8 @@ export function formatLocalDateTime(
  * 替代 `toISOString().slice(0, 10)` — 避免 UTC 日期边界错位。
  * 用于只需日期精度的场景（任务截止、存储条目、curriculum 执行时间等）。
  */
-export function formatLocalDate(dateOrIso: string | Date, timezone?: string | null): string {
-  return toLuxonDt(dateOrIso, timezone).toFormat('yyyy-MM-dd');
+export function formatLocalDate(dateOrIso: PromptDateTime, timezone?: string | null): string {
+  return toTemporalZdt(dateOrIso, timezone).toPlainDate().toString();
 }
 
 /**
@@ -83,8 +114,9 @@ export function formatLocalDate(dateOrIso: string | Date, timezone?: string | nu
  * 替代 `isoString.slice(5, 16)` — 避免 UTC 时间错位。
  * 用于行为时间线等需要月日时分但不需年份的场景。
  */
-export function formatLocalShortTime(dateOrIso: string | Date, timezone?: string | null): string {
-  return toLuxonDt(dateOrIso, timezone).toFormat('MM-dd HH:mm');
+export function formatLocalShortTime(dateOrIso: PromptDateTime, timezone?: string | null): string {
+  const dt = toTemporalZdt(dateOrIso, timezone);
+  return `${dt.month.toString().padStart(2, '0')}-${dt.day.toString().padStart(2, '0')} ${dt.hour.toString().padStart(2, '0')}:${dt.minute.toString().padStart(2, '0')}`;
 }
 
 // 生成要求 (Requirements/Instructions)

@@ -39,6 +39,7 @@ import { model as createModel, parseProvider } from './auto.client';
 import { getOpenAI, getOpenRouter } from './llm.clients';
 import { disableThinkingOptions, reasoningEffortOptions } from './options.helpers';
 
+import { Temporal } from '@js-temporal/polyfill';
 import * as Sentry from '@sentry/nestjs';
 import {
   APICallError,
@@ -580,7 +581,7 @@ export class LLM {
             messages,
             jsonSchema: jsonSchemaObj,
             ...extra,
-            capturedAt: new Date().toISOString(),
+            capturedAt: Temporal.Now.instant().toString({ smallestUnit: 'millisecond' }),
           },
           null,
           2,

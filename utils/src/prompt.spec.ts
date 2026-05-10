@@ -1,6 +1,7 @@
-import { TimeSensitivity } from './prompt';
+import { formatLocalDateTime, TimeSensitivity } from './prompt';
 import { PromptBuilder } from './prompt.xml';
 
+import { Temporal } from '@js-temporal/polyfill';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import dedent from 'dedent';
 
@@ -200,6 +201,14 @@ describe('PromptBuilder', () => {
 
     const result = prompt.render({ timezone: 'Asia/Tokyo', sensitivity: TimeSensitivity.Minute });
     expect(result).toContain('Now:2024-01-15 Monday 19:30 in the evening (Asia/Tokyo)');
+  });
+
+  it('应该直接格式化 Temporal.Instant 输入', () => {
+    const instant = Temporal.Instant.from('2024-01-15T10:30:00Z');
+
+    expect(formatLocalDateTime(instant, TimeSensitivity.Minute, 'Asia/Tokyo')).toBe(
+      '2024-01-15 Monday 19:30 in the evening (Asia/Tokyo)',
+    );
   });
 
   it('缺少 role 应抛出错误', () => {

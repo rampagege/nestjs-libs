@@ -7,6 +7,7 @@ import {
   parseYmdToUtcDate,
 } from './datetime';
 
+import { Temporal } from '@js-temporal/polyfill';
 import { describe, expect, it, mock } from 'bun:test';
 
 /**
@@ -15,7 +16,7 @@ import { describe, expect, it, mock } from 'bun:test';
  * 设计意图：
  * - 验证有效时区格式被保留（IANA 和偏移格式）
  * - 验证无效格式返回 null
- * - date-fns-tz formatInTimeZone 直接支持两种格式，无需转换
+ * - Temporal 直接支持 IANA 和完整偏移格式
  */
 describe('timezone.helper', () => {
   describe('normalizeTimezone', () => {
@@ -190,8 +191,8 @@ describe('timezone.helper', () => {
 
   describe('YMD Utilities', () => {
     describe('formatDateToYmd', () => {
-      it('应该正确格式化 UTC 日期', () => {
-        const date = new Date(Date.UTC(2023, 11, 25));
+      it('应该正确格式化 Temporal.PlainDate', () => {
+        const date = Temporal.PlainDate.from('2023-12-25');
         expect(formatDateToYmd(date)).toBe('2023-12-25');
       });
 
@@ -201,11 +202,9 @@ describe('timezone.helper', () => {
     });
 
     describe('parseYmdToUtcDate', () => {
-      it('应该正确解析有效的 YMD', () => {
+      it('应该正确解析有效的 YMD 为 Temporal.PlainDate', () => {
         const date = parseYmdToUtcDate('2023-12-25');
-        expect(date.getUTCFullYear()).toBe(2023);
-        expect(date.getUTCMonth()).toBe(11);
-        expect(date.getUTCDate()).toBe(25);
+        expect(Temporal.PlainDate.compare(date, Temporal.PlainDate.from('2023-12-25'))).toBe(0);
       });
 
       it('无效格式应抛出错误', () => {

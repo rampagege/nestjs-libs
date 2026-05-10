@@ -9,6 +9,8 @@
 
 import { r } from './logging';
 
+import { Temporal } from '@js-temporal/polyfill';
+
 // ==================== ANSI Colors ====================
 
 const ansi = {
@@ -29,19 +31,14 @@ const ansi = {
 
 /** `2026-03-16 15:00:00.022+09:00` */
 export function formatTimestamp(ts: number): string {
-  const d = new Date(ts);
+  const d = Temporal.Instant.fromEpochMilliseconds(ts).toZonedDateTimeISO(Temporal.Now.timeZoneId());
   const pad2 = (n: number) => String(n).padStart(2, '0');
   const pad3 = (n: number) => String(n).padStart(3, '0');
 
-  const date = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-  const time = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${pad3(d.getMilliseconds())}`;
+  const date = `${d.year.toString().padStart(4, '0')}-${pad2(d.month)}-${pad2(d.day)}`;
+  const time = `${pad2(d.hour)}:${pad2(d.minute)}:${pad2(d.second)}.${pad3(d.millisecond)}`;
 
-  const offset = -d.getTimezoneOffset();
-  const sign = offset >= 0 ? '+' : '-';
-  const abs = Math.abs(offset);
-  const tz = `${sign}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`;
-
-  return `${date} ${time}${tz}`;
+  return `${date} ${time}${d.offset}`;
 }
 
 /** Level label → ANSI colored full uppercase, padded to 7 chars (WARNING is longest) */
@@ -147,7 +144,7 @@ export function prodFormatter(record: LogRecord): string {
     : String(record.message);
 
   const entry: Record<string, unknown> = {
-    '@timestamp': new Date(record.timestamp).toISOString(),
+    '@timestamp': Temporal.Instant.fromEpochMilliseconds(record.timestamp).toString({ smallestUnit: 'millisecond' }),
     level: record.level.toUpperCase(),
     message,
     logger: record.category.join('.'),

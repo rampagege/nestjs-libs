@@ -23,10 +23,12 @@ import { VisitorInterceptor } from '@app/nest/interceptors/visitor.interceptor';
 import { configureLogging, LogtapeNestLogger } from '@app/nest/logging';
 import { otelTraceMiddleware } from '@app/nest/middleware/otel-trace.middleware';
 import { getAppLogger } from '@app/utils/app-logger';
+import { normalizeTimezone } from '@app/utils/datetime';
 import { maskSecret } from '@app/utils/security';
 
 import os from 'node:os';
 
+import { Temporal } from '@js-temporal/polyfill';
 import compression from 'compression';
 import { RedisStore } from 'connect-redis';
 import cookieParser from 'cookie-parser';
@@ -35,7 +37,6 @@ import session from 'express-session';
 import { graphqlUploadExpress } from 'graphql-upload-ts';
 import helmet from 'helmet';
 import Redis from 'ioredis';
-import { DateTime } from 'luxon';
 import morgan from 'morgan';
 import responseTime from 'response-time';
 
@@ -388,6 +389,18 @@ export async function bootstrap(
 // Banner
 // ---------------------------------------------------------------------------
 
+const BANNER_WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
+
+function toBannerZdt(instant: Temporal.Instant, timezone: string): Temporal.ZonedDateTime {
+  return instant.toZonedDateTimeISO(normalizeTimezone(timezone) ?? 'UTC');
+}
+
+function formatBannerDateTime(zdt: Temporal.ZonedDateTime): string {
+  const date = `${zdt.year.toString().padStart(4, '0')}-${zdt.month.toString().padStart(2, '0')}-${zdt.day.toString().padStart(2, '0')}`;
+  const time = `${zdt.hour.toString().padStart(2, '0')}:${zdt.minute.toString().padStart(2, '0')}:${zdt.second.toString().padStart(2, '0')}`;
+  return `${date} ${BANNER_WEEKDAYS[zdt.dayOfWeek - 1]} ${time}`;
+}
+
 function printBanner(
   mode: BootstrapMode,
   ctx: {
@@ -398,7 +411,7 @@ function printBanner(
     startedAt: number;
   },
 ) {
-  const startTime = DateTime.utc();
+  const startTime = Temporal.Now.instant();
   const nodeVersion = process.version;
   const bunVersion = 'Bun' in globalThis ? (globalThis as unknown as { Bun: { version: string } }).Bun.version : null;
   const runtimeVersions = bunVersion ? `Node ${nodeVersion} / Bun ${bunVersion}` : `Node ${nodeVersion}`;
@@ -420,9 +433,12 @@ function printApiBanner(
     options: BootstrapOptions | undefined;
     startedAt: number;
   },
-  startTime: DateTime,
+  startTime: Temporal.Instant,
   runtimeVersions: string,
 ) {
+  const sysEnvTime = toBannerZdt(startTime, SysEnv.TZ);
+  const localTime = toBannerZdt(startTime, Temporal.Now.timeZoneId());
+  const utcTime = toBannerZdt(startTime, 'UTC');
   const server = ctx.app.getHttpServer();
   const address = server.address();
   const bindAddress = address
@@ -472,9 +488,9 @@ function printApiBanner(
   bootstrapLogger.info`├─ 运行时信息 ───────────────────────────────────────────`;
   bootstrapLogger.info`│ Platform: ${process.platform}`;
   bootstrapLogger.info`│ Runtime: ${runtimeVersions}`;
-  bootstrapLogger.info`│ SysEnv.TZ Time: ${startTime.setZone(SysEnv.TZ).toFormat('yyyy-MM-dd EEEE HH:mm:ss')} (${startTime.setZone(SysEnv.TZ).zoneName})`;
-  bootstrapLogger.info`│ Local Time: ${startTime.setZone('local').toFormat('yyyy-MM-dd EEEE HH:mm:ss')} (${startTime.setZone('local').zoneName})`;
-  bootstrapLogger.info`│ UTC Time: ${startTime.toFormat('yyyy-MM-dd EEEE HH:mm:ss')}`;
+  bootstrapLogger.info`│ SysEnv.TZ Time: ${formatBannerDateTime(sysEnvTime)} (${sysEnvTime.timeZoneId})`;
+  bootstrapLogger.info`│ Local Time: ${formatBannerDateTime(localTime)} (${localTime.timeZoneId})`;
+  bootstrapLogger.info`│ UTC Time: ${formatBannerDateTime(utcTime)}`;
   bootstrapLogger.info`└─ Startup Time: ${Date.now() - ctx.startedAt}ms`;
 }
 
@@ -485,9 +501,10 @@ function printGrpcBanner(
     options: BootstrapOptions | undefined;
     startedAt: number;
   },
-  startTime: DateTime,
+  startTime: Temporal.Instant,
   runtimeVersions: string,
 ) {
+  const utcTime = toBannerZdt(startTime, 'UTC');
   const enableReflection = ctx.options?.grpc?.reflection !== false;
 
   bootstrapLogger.info`🦋 [Server] gRPC Server started successfully`;
@@ -505,7 +522,7 @@ function printGrpcBanner(
   bootstrapLogger.info`├─ 运行时信息 ───────────────────────────────────────────`;
   bootstrapLogger.info`│ Platform: ${process.platform}`;
   bootstrapLogger.info`│ Runtime: ${runtimeVersions}`;
-  bootstrapLogger.info`│ UTC Time: ${startTime.toFormat('yyyy-MM-dd EEEE HH:mm:ss')}`;
+  bootstrapLogger.info`│ UTC Time: ${formatBannerDateTime(utcTime)}`;
   bootstrapLogger.info`└─ Startup Time: ${Date.now() - ctx.startedAt}ms`;
 }
 
@@ -515,9 +532,10 @@ function printSchedulerBanner(
     options: BootstrapOptions | undefined;
     startedAt: number;
   },
-  startTime: DateTime,
+  startTime: Temporal.Instant,
   runtimeVersions: string,
 ) {
+  const sysEnvTime = toBannerZdt(startTime, SysEnv.TZ);
   bootstrapLogger.info`🦋 [Scheduler] Scheduler process started successfully`;
   bootstrapLogger.info`┌─ 配置 ─────────────────────────────────────────────────`;
   bootstrapLogger.info`│ Mode: scheduler`;
@@ -531,6 +549,6 @@ function printSchedulerBanner(
   bootstrapLogger.info`├─ 运行时 ───────────────────────────────────────────────`;
   bootstrapLogger.info`│ Platform: ${process.platform}`;
   bootstrapLogger.info`│ Runtime: ${runtimeVersions}`;
-  bootstrapLogger.info`│ Time: ${startTime.setZone(SysEnv.TZ).toFormat('yyyy-MM-dd EEEE HH:mm:ss')} (${startTime.setZone(SysEnv.TZ).zoneName})`;
+  bootstrapLogger.info`│ Time: ${formatBannerDateTime(sysEnvTime)} (${sysEnvTime.timeZoneId})`;
   bootstrapLogger.info`└─ Startup: ${Date.now() - ctx.startedAt}ms`;
 }

@@ -1,7 +1,7 @@
 import { Trace } from '@app/nest/trace';
-
 import { getAppLogger } from '@app/utils/app-logger';
-import { DateTime } from 'luxon';
+
+import { Temporal } from '@js-temporal/polyfill';
 
 import type { Logger } from '@app/utils/app-logger';
 import type { OnApplicationBootstrap, OnApplicationShutdown, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
@@ -15,7 +15,7 @@ export abstract class InitializableModule
   implements OnModuleInit, OnModuleDestroy, OnApplicationBootstrap, OnApplicationShutdown
 {
   protected readonly logger: Logger;
-  protected readonly startTime: DateTime;
+  protected readonly startTime: Temporal.Instant;
   protected readonly timeout: number;
   protected readonly moduleName: string;
 
@@ -23,7 +23,7 @@ export abstract class InitializableModule
     this.timeout = options.timeout ?? 30;
     this.moduleName = options.moduleName ?? this.constructor.name;
     this.logger = getAppLogger(this.moduleName);
-    this.startTime = DateTime.now();
+    this.startTime = Temporal.Now.instant();
   }
 
   @Trace()
@@ -50,10 +50,12 @@ export abstract class InitializableModule
       // 等待初始化完成或超时
       await Promise.race([this.initialize(), timeoutPromise]);
 
-      const endTime = DateTime.now();
-      const duration = endTime.diff(this.startTime);
+      const duration = this.startTime.until(Temporal.Now.instant(), {
+        largestUnit: 'hours',
+        smallestUnit: 'milliseconds',
+      });
 
-      this.logger.debug`#initialize initialized in ${duration.rescale().toHuman()}`;
+      this.logger.debug`#initialize initialized in ${duration.toLocaleString('en')}`;
     } catch (error: unknown) {
       this.logger.error`#initialize failed: ${error}`;
       throw error;
@@ -86,12 +88,14 @@ export abstract class InitializableModule
       return;
     }
 
-    const startTime = DateTime.now();
+    const startTime = Temporal.Now.instant();
     this.logger.debug`#onBootstrap bootstraping...`;
     await this.onBootstrap();
-    const endTime = DateTime.now();
-    const duration = endTime.diff(startTime);
-    this.logger.debug`#onBootstrap bootstraped in ${duration.toHuman()}`;
+    const duration = startTime.until(Temporal.Now.instant(), {
+      largestUnit: 'hours',
+      smallestUnit: 'milliseconds',
+    });
+    this.logger.debug`#onBootstrap bootstraped in ${duration.toLocaleString('en')}`;
   }
 
   protected async onBootstrap(): Promise<void> {
@@ -105,12 +109,14 @@ export abstract class InitializableModule
       return;
     }
 
-    const startTime = DateTime.now();
+    const startTime = Temporal.Now.instant();
     this.logger.debug`#onShutdown shutting down... ${{ signal }}`;
     await this.onShutdown();
-    const endTime = DateTime.now();
-    const duration = endTime.diff(startTime);
-    this.logger.debug`#onShutdown shut down in ${duration.toHuman()}`;
+    const duration = startTime.until(Temporal.Now.instant(), {
+      largestUnit: 'hours',
+      smallestUnit: 'milliseconds',
+    });
+    this.logger.debug`#onShutdown shut down in ${duration.toLocaleString('en')}`;
   }
 
   protected async onShutdown() {
