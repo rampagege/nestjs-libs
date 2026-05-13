@@ -1,10 +1,12 @@
 import {
+  dateToPlainDate,
   formatDateToYmd,
   isValidYmdDate,
   normalizeTimezone,
   normalizeTimezoneWithLog,
   parseTimezoneOffset,
   parseYmdToUtcDate,
+  plainDateToUtcDate,
 } from './datetime';
 
 import { Temporal } from '@js-temporal/polyfill';
@@ -234,6 +236,49 @@ describe('timezone.helper', () => {
       it('无效日期返回 false', () => {
         expect(isValidYmdDate('2023-02-30')).toBe(false);
         expect(isValidYmdDate('invalid')).toBe(false);
+      });
+    });
+
+    describe('dateToPlainDate (Date → PlainDate codec)', () => {
+      it('UTC midnight Date → 同日 PlainDate', () => {
+        const d = new Date(Date.UTC(2024, 3, 18)); // April 18 2024 UTC
+        const pd = dateToPlainDate(d);
+        expect(pd).not.toBeNull();
+        expect(Temporal.PlainDate.compare(pd!, Temporal.PlainDate.from('2024-04-18'))).toBe(0);
+      });
+
+      it('用 UTC accessors，本地 tz 不会偏移读出的日期', () => {
+        // 2024-04-18T00:00:00Z 在东八区是 2024-04-18T08:00（仍是 4-18 本地）
+        // 但故意挑跨日的：2024-04-18T23:30:00Z（UTC 仍是 4-18）→ 应当读成 4-18，不是 4-19
+        const d = new Date(Date.UTC(2024, 3, 18, 23, 30));
+        const pd = dateToPlainDate(d);
+        expect(pd!.toString()).toBe('2024-04-18');
+      });
+
+      it('null/undefined → null', () => {
+        expect(dateToPlainDate(null)).toBeNull();
+        expect(dateToPlainDate(undefined)).toBeNull();
+      });
+    });
+
+    describe('plainDateToUtcDate (PlainDate → Date codec)', () => {
+      it('PlainDate → UTC midnight Date', () => {
+        const pd = Temporal.PlainDate.from('2024-04-18');
+        const d = plainDateToUtcDate(pd);
+        expect(d).not.toBeNull();
+        expect(d!.toISOString()).toBe('2024-04-18T00:00:00.000Z');
+      });
+
+      it('null/undefined → null', () => {
+        expect(plainDateToUtcDate(null)).toBeNull();
+        expect(plainDateToUtcDate(undefined)).toBeNull();
+      });
+
+      it('roundtrip Date → PlainDate → Date 稳定', () => {
+        const original = new Date(Date.UTC(2024, 3, 18));
+        const pd = dateToPlainDate(original);
+        const back = plainDateToUtcDate(pd);
+        expect(back!.getTime()).toBe(original.getTime());
       });
     });
   });

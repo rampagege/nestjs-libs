@@ -125,3 +125,39 @@ export function isValidYmdDate(value: string): boolean {
     return false;
   }
 }
+
+/**
+ * Date ↔ PlainDate codecs.
+ *
+ * 设计意图（boundary codec）：
+ * - libs 内部的 domain helpers (formatDateToYmd 等) 仅接 Temporal.PlainDate——
+ *   领域只说日历日，不混入 timestamp 语义。
+ * - 但 Prisma 等持久层目前只能把 DATE 列表达成 JS Date。本组函数提供从那一侧
+ *   过来的显式 codec，供 consumer 在 persistence boundary（mapper / repository / adapter）
+ *   做一次性转换，让领域内部全程持有 PlainDate。
+ *
+ * 切勿用作"给 domain helper 加 Date 重载"的工具——保持 domain helper 签名严格是
+ * libs Temporal 迁移的核心动机。
+ */
+
+/**
+ * 把 Prisma `@db.Date` 列读出的 Date 转成 Temporal.PlainDate。
+ * 用 UTC accessors，避免本地时区把跨日 boundary 的字段读偏一天。
+ */
+export function dateToPlainDate(date: Date | null | undefined): Temporal.PlainDate | null {
+  if (!date) return null;
+  return Temporal.PlainDate.from({
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  });
+}
+
+/**
+ * 把 Temporal.PlainDate 转回 Prisma `@db.Date` 列可写的 Date（UTC 00:00 of that day）。
+ * 用于 write-path：domain 持有 PlainDate，写入 Prisma 前一次性 codec。
+ */
+export function plainDateToUtcDate(date: Temporal.PlainDate | null | undefined): Date | null {
+  if (!date) return null;
+  return new Date(Date.UTC(date.year, date.month - 1, date.day));
+}
