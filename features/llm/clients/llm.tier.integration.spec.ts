@@ -115,7 +115,7 @@ describe('LLM tier headers: HTTP-level integration (regression guard)', () => {
     await callIgnoringError(() =>
       LLM.generateText({
         id: 'integration-generateText',
-        model: 'vertex:gemini-3.1-flash-lite-preview?tier=flex',
+        model: 'vertex:gemini-3.1-flash-lite?tier=flex',
         messages: SIMPLE_MESSAGE,
         maxRetries: 0,
       }),
@@ -127,7 +127,7 @@ describe('LLM tier headers: HTTP-level integration (regression guard)', () => {
     await callIgnoringError(() =>
       LLM.generateObject({
         id: 'integration-generateObject',
-        model: 'vertex:gemini-3.1-flash-lite-preview?tier=flex',
+        model: 'vertex:gemini-3.1-flash-lite?tier=flex',
         messages: SIMPLE_MESSAGE,
         schema: SIMPLE_SCHEMA,
         maxRetries: 0,
@@ -185,7 +185,7 @@ describe('LLM tier headers: HTTP-level integration (regression guard)', () => {
     await callIgnoringError(async () => {
       const gen = LLM.streamObjectViaTool({
         id: 'integration-streamObjectViaTool',
-        model: 'vertex:gemini-3.1-flash-lite-preview?tier=flex',
+        model: 'vertex:gemini-3.1-flash-lite?tier=flex',
         messages: SIMPLE_MESSAGE,
         schema: SIMPLE_SCHEMA,
         maxRetries: 0,

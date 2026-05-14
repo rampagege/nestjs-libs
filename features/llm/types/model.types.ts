@@ -317,37 +317,37 @@ export interface LLMModelRegistry {
   'openrouter:minimax/minimax-m2.5': ModelConfig<'openrouter'>;
 
   /**
-   * Gemini 3.1 Flash Lite Preview - 轻量快速
+   * Gemini 3.1 Flash Lite - 轻量快速
    *
    * 定价参考（2026.03）：Input $0.25/M, Output $1.50/M, Context 1M
    *
    * 接近 Gemini 2.5 Flash 质量，比 2.5 Flash Lite 显著提升
    *
-   * @see https://openrouter.ai/google/gemini-3.1-flash-lite-preview
+   * @see https://openrouter.ai/google/gemini-3.1-flash-lite
    */
-  'openrouter:gemini-3.1-flash-lite-preview': ModelConfig<'openrouter'>;
-  'openrouter:google/gemini-3.1-flash-lite-preview': ModelConfig<'openrouter'>;
+  'openrouter:gemini-3.1-flash-lite': ModelConfig<'openrouter'>;
+  'openrouter:google/gemini-3.1-flash-lite': ModelConfig<'openrouter'>;
 
   // ==================== Google Direct ====================
   'google:gemini-2.5-flash': ModelConfig<'google'>;
   'google:gemini-2.5-pro': ModelConfig<'google'>;
   'google:gemini-2.5-flash-lite': ModelConfig<'google'>;
   'google:gemini-3-flash-preview': ModelConfig<'google'>;
-  'google:gemini-3.1-flash-lite-preview': ModelConfig<'google'>;
+  'google:gemini-3.1-flash-lite': ModelConfig<'google'>;
 
   // ==================== Vertex AI (Express Mode) ====================
   'vertex:gemini-2.5-flash': ModelConfig<'vertex'>;
   'vertex:gemini-2.5-pro': ModelConfig<'vertex'>;
   'vertex:gemini-2.5-flash-lite': ModelConfig<'vertex'>;
   'vertex:gemini-3-flash-preview': ModelConfig<'vertex'>;
-  'vertex:gemini-3.1-flash-lite-preview': ModelConfig<'vertex'>;
+  'vertex:gemini-3.1-flash-lite': ModelConfig<'vertex'>;
 
   // ==================== Vertex AI (project/global mode) ====================
   'vertex-global:gemini-2.5-flash': ModelConfig<'vertex-global'>;
   'vertex-global:gemini-2.5-pro': ModelConfig<'vertex-global'>;
   'vertex-global:gemini-2.5-flash-lite': ModelConfig<'vertex-global'>;
   'vertex-global:gemini-3-flash-preview': ModelConfig<'vertex-global'>;
-  'vertex-global:gemini-3.1-flash-lite-preview': ModelConfig<'vertex-global'>;
+  'vertex-global:gemini-3.1-flash-lite': ModelConfig<'vertex-global'>;
 }
 
 /**
@@ -575,22 +575,16 @@ const modelRegistry = new Map<string, ModelConfig>([
     { provider: 'openrouter', modelId: 'minimax/minimax-m2.5', reasoningRequired: true },
   ],
 
-  // Gemini 3.1 Flash Lite Preview
-  [
-    'openrouter:gemini-3.1-flash-lite-preview',
-    { provider: 'openrouter', modelId: 'google/gemini-3.1-flash-lite-preview' },
-  ],
-  [
-    'openrouter:google/gemini-3.1-flash-lite-preview',
-    { provider: 'openrouter', modelId: 'google/gemini-3.1-flash-lite-preview' },
-  ],
+  // Gemini 3.1 Flash Lite
+  ['openrouter:gemini-3.1-flash-lite', { provider: 'openrouter', modelId: 'google/gemini-3.1-flash-lite' }],
+  ['openrouter:google/gemini-3.1-flash-lite', { provider: 'openrouter', modelId: 'google/gemini-3.1-flash-lite' }],
 
   // Google Direct 模型
   ['google:gemini-2.5-flash', { provider: 'google', modelId: 'gemini-2.5-flash' }],
   ['google:gemini-2.5-pro', { provider: 'google', modelId: 'gemini-2.5-pro' }],
   ['google:gemini-2.5-flash-lite', { provider: 'google', modelId: 'gemini-2.5-flash-lite' }],
   ['google:gemini-3-flash-preview', { provider: 'google', modelId: 'gemini-3-flash-preview' }],
-  ['google:gemini-3.1-flash-lite-preview', { provider: 'google', modelId: 'gemini-3.1-flash-lite-preview' }],
+  ['google:gemini-3.1-flash-lite', { provider: 'google', modelId: 'gemini-3.1-flash-lite' }],
 
   // Vertex AI 模型 (Express Mode)
   // 这些 key 保持既有 API-key Express Mode 语义；需要 Google 官方 project/global
@@ -615,10 +609,10 @@ const modelRegistry = new Map<string, ModelConfig>([
     { provider: 'vertex', modelId: 'gemini-3-flash-preview', supportedTiers: ['standard', 'flex', 'priority'] },
   ],
   [
-    'vertex:gemini-3.1-flash-lite-preview',
+    'vertex:gemini-3.1-flash-lite',
     {
       provider: 'vertex',
-      modelId: 'gemini-3.1-flash-lite-preview',
+      modelId: 'gemini-3.1-flash-lite',
       supportedTiers: ['standard', 'flex', 'priority'],
     },
   ],
@@ -642,10 +636,10 @@ const modelRegistry = new Map<string, ModelConfig>([
     { provider: 'vertex-global', modelId: 'gemini-3-flash-preview', supportedTiers: ['standard', 'flex', 'priority'] },
   ],
   [
-    'vertex-global:gemini-3.1-flash-lite-preview',
+    'vertex-global:gemini-3.1-flash-lite',
     {
       provider: 'vertex-global',
-      modelId: 'gemini-3.1-flash-lite-preview',
+      modelId: 'gemini-3.1-flash-lite',
       supportedTiers: ['standard', 'flex', 'priority'],
     },
   ],
@@ -730,7 +724,7 @@ export function getProvider(spec: LLMModelSpec): LLMProviderType {
  * 调用方可预先判断；也可直接传 tier，运行时不支持会 warn + 降级。
  *
  * @example
- * getSupportedTiers('vertex-global:gemini-3.1-flash-lite-preview') // → ['standard', 'flex', 'priority']
+ * getSupportedTiers('vertex-global:gemini-3.1-flash-lite') // → ['standard', 'flex', 'priority']
  * getSupportedTiers('vertex:gemini-2.5-flash-lite')                 // → ['standard', 'priority']
  * getSupportedTiers('openrouter:grok-4.1-fast')                     // → ['standard']
  */

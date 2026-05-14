@@ -25,9 +25,9 @@ import type { LLMModelSpec, VertexTier } from '../types/model.types';
 
 describe('parseModelSpec: ?tier query parameter', () => {
   it('parses ?tier=flex', () => {
-    const spec = 'vertex:gemini-3.1-flash-lite-preview?tier=flex' as LLMModelSpec;
+    const spec = 'vertex:gemini-3.1-flash-lite?tier=flex' as LLMModelSpec;
     const result = parseModelSpec(spec);
-    expect(result.key).toBe('vertex:gemini-3.1-flash-lite-preview');
+    expect(result.key).toBe('vertex:gemini-3.1-flash-lite');
     expect(result.tier).toBe('flex');
   });
 
@@ -56,15 +56,14 @@ describe('parseModelSpec: ?tier query parameter', () => {
   });
 
   it('coexists with other spec params (reason + tier)', () => {
-    const spec = 'vertex:gemini-3.1-flash-lite-preview?reason=low&tier=flex' as LLMModelSpec;
+    const spec = 'vertex:gemini-3.1-flash-lite?reason=low&tier=flex' as LLMModelSpec;
     const result = parseModelSpec(spec);
     expect(result.thinking).toBe('low');
     expect(result.tier).toBe('flex');
   });
 
   it('coexists with fallback params', () => {
-    const spec =
-      'vertex:gemini-3.1-flash-lite-preview?tier=flex&fallback=openrouter:gemini-2.5-flash-lite' as LLMModelSpec;
+    const spec = 'vertex:gemini-3.1-flash-lite?tier=flex&fallback=openrouter:gemini-2.5-flash-lite' as LLMModelSpec;
     const result = parseModelSpec(spec);
     expect(result.tier).toBe('flex');
     expect(result.fallbackModels).toContain('openrouter:gemini-2.5-flash-lite');
@@ -110,8 +109,8 @@ describe('getSupportedTiers', () => {
     expect(tiers).toEqual(['standard', 'priority']);
   });
 
-  it('returns [standard, flex, priority] for vertex:gemini-3.1-flash-lite-preview (both lists)', () => {
-    const tiers = getSupportedTiers('vertex:gemini-3.1-flash-lite-preview');
+  it('returns [standard, flex, priority] for vertex:gemini-3.1-flash-lite (both lists)', () => {
+    const tiers = getSupportedTiers('vertex:gemini-3.1-flash-lite');
     expect(tiers).toEqual(['standard', 'flex', 'priority']);
   });
 
@@ -126,7 +125,7 @@ describe('getSupportedTiers', () => {
   });
 
   it('works with spec query params in the input', () => {
-    const tiers = getSupportedTiers('vertex:gemini-3.1-flash-lite-preview?tier=flex' as LLMModelSpec);
+    const tiers = getSupportedTiers('vertex:gemini-3.1-flash-lite?tier=flex' as LLMModelSpec);
     expect(tiers).toEqual(['standard', 'flex', 'priority']);
   });
 });
@@ -148,8 +147,8 @@ describe('buildTierHeaders: no-op paths', () => {
 });
 
 describe('buildTierHeaders: supported tiers emit header', () => {
-  it('flex on gemini-3.1-flash-lite-preview → emits X-Vertex-AI-LLM-Shared-Request-Type: flex', () => {
-    const headers = buildTierHeaders('vertex:gemini-3.1-flash-lite-preview', 'flex');
+  it('flex on gemini-3.1-flash-lite → emits X-Vertex-AI-LLM-Shared-Request-Type: flex', () => {
+    const headers = buildTierHeaders('vertex:gemini-3.1-flash-lite', 'flex');
     expect(headers).toEqual({ [VERTEX_TIER_HEADER]: 'flex' });
   });
 
@@ -173,8 +172,8 @@ describe('buildTierHeaders: supported tiers emit header', () => {
     expect(headers).toEqual({ [VERTEX_TIER_HEADER]: 'priority' });
   });
 
-  it('priority on gemini-3.1-flash-lite-preview → emits priority header (dual flex+priority)', () => {
-    const headers = buildTierHeaders('vertex:gemini-3.1-flash-lite-preview', 'priority');
+  it('priority on gemini-3.1-flash-lite → emits priority header (dual flex+priority)', () => {
+    const headers = buildTierHeaders('vertex:gemini-3.1-flash-lite', 'priority');
     expect(headers).toEqual({ [VERTEX_TIER_HEADER]: 'priority' });
   });
 
