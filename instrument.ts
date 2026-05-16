@@ -276,7 +276,30 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
   const instrumentations: unknown[] = [];
   if (GrpcInstrumentation) instrumentations.push(new GrpcInstrumentation());
   if (httpInstrumentationEnabled && HttpInstrumentation) {
-    instrumentations.push(new HttpInstrumentation());
+    // requestHook renames span from default "POST" / "GET" to "http.{METHOD} {path}".
+    // Default @opentelemetry/instrumentation-http span names are method-only, which
+    // makes traces with many routes hard to scan. The "http.{method} {path}" form
+    // is what most OTel ecosystems (Datadog/Honeycomb/Tempo dashboards) expect and
+    // matches typical span-naming conventions. Hook is intentionally tiny + never
+    // throws (hot path runs on every request).
+    const HttpInst = HttpInstrumentation;
+    instrumentations.push(
+      new HttpInst({
+        requestHook: (span: { updateName: (n: string) => void }, request: unknown) => {
+          try {
+            const r = request as { method?: string; url?: string; path?: string };
+            const method = r.method;
+            if (!method) return;
+            const target = r.url ?? r.path ?? '';
+            const qIdx = target.indexOf('?');
+            const cleanPath = qIdx >= 0 ? target.slice(0, qIdx) : target;
+            span.updateName(cleanPath ? `http.${method} ${cleanPath}` : `http.${method}`);
+          } catch {
+            // never throw from a hot path hook
+          }
+        },
+      }),
+    );
   } else if (httpInstrumentationEnabled && !HttpInstrumentation) {
     otelLogger.warning`${'OTEL_HTTP_INSTRUMENTATION=true but @opentelemetry/instrumentation-http not installed'}`;
   }
