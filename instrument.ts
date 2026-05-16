@@ -277,7 +277,7 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
   if (langfuseProcessor) {
     const fullStackOn = getStringFromEnv('LANGFUSE_EXPORT_FULL_STACK') === 'true';
     if (fullStackOn && !httpInstrumentationEnabled) {
-      otelLogger.warning`${'LANGFUSE_EXPORT_FULL_STACK=true but HTTP instrumentation is off — no http.* spans will reach Langfuse. Set APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true to enable.'}`;
+      otelLogger.warning`${'LANGFUSE_EXPORT_FULL_STACK=true but HTTP instrumentation is off — no spans from @opentelemetry/instrumentation-http will be created or exported. Set APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true to enable.'}`;
     }
   }
 
