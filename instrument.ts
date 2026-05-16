@@ -28,6 +28,11 @@
  * - OTEL_LOG_LEVEL: OpenTelemetry 日志级别（设为 NONE 禁用）
  * - LANGFUSE_ENABLED: 启用 Langfuse（需要 @langfuse/otel）
  * - LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL: Langfuse 配置
+ * - LANGFUSE_EXPORT_FULL_STACK: opt-in 'true' 让 grpc / http / prisma scope 的 span
+ *     也导出到 Langfuse（默认仅 scope='ai'）。用于全栈 trace 关联 / RCA 场景。
+ * - OTEL_HTTP_INSTRUMENTATION: opt-in 'true' 注册 @opentelemetry/instrumentation-http
+ *     (按需安装) 让 inbound/outbound HTTP 请求自动创建 span。默认不开（避免额外
+ *     per-request overhead + span 量上涨）。
  * - SENTRY_DSN: Sentry DSN（启用 Sentry 接管 OTel + 错误追踪）
  *
  * 注意事项：
@@ -78,6 +83,14 @@ try {
   // gRPC instrumentation not installed, skip
 }
 
+let HttpInstrumentation: (new (opts?: unknown) => unknown) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- optional dependency
+  HttpInstrumentation = require('@opentelemetry/instrumentation-http').HttpInstrumentation;
+} catch {
+  // HTTP instrumentation not installed, skip
+}
+
 let LangfuseSpanProcessor: (new (opts: unknown) => unknown) | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- optional dependency
@@ -115,6 +128,21 @@ function configureDiagLogLevel() {
   }
 }
 
+/**
+ * Span scopes that are NOT scope='ai' but still useful for cross-service trace
+ * correlation in Langfuse. Opt-in via LANGFUSE_EXPORT_FULL_STACK=true.
+ *
+ * Why opt-in: each non-'ai' scope adds spans → larger Langfuse footprint. Default
+ * preserves the historical AI-only filter so existing consumers don't see a span
+ * volume / cost regression. Apps that *want* to see the full http→grpc→prisma
+ * trace alongside the LLM call (typical RCA scenario) set the env flag.
+ */
+const FULL_STACK_EXTRA_SCOPES = [
+  '@opentelemetry/instrumentation-grpc',
+  '@opentelemetry/instrumentation-http',
+  'prisma',
+] as const;
+
 function createLangfuseProcessor(): unknown | null {
   const enabled = getStringFromEnv('LANGFUSE_ENABLED');
   if (enabled !== 'true') return null;
@@ -132,10 +160,12 @@ function createLangfuseProcessor(): unknown | null {
   }
 
   const environmentTag = getStringFromEnv('LANGFUSE_TRACING_ENVIRONMENT') ?? process.env.NODE_ENV ?? 'dev';
-  langfuseLogger.info`${`enabled host=${baseUrl} env=${environmentTag}`}`;
+  const fullStack = getStringFromEnv('LANGFUSE_EXPORT_FULL_STACK') === 'true';
+  langfuseLogger.info`${`enabled host=${baseUrl} env=${environmentTag} fullStack=${fullStack}`}`;
 
-  // Only export AI-related spans (scope='ai')
-
+  // Default: only export scope='ai' spans (LLM / Vercel AI SDK telemetry).
+  // Opt-in LANGFUSE_EXPORT_FULL_STACK=true also exports gRPC client + HTTP +
+  // Prisma spans so cross-service traces show the full request path in Langfuse.
   const shouldExportSpan = ({ otelSpan }: { otelSpan: Record<string, unknown> }) => {
     const span = otelSpan as {
       instrumentationScope?: { name?: string };
@@ -147,11 +177,12 @@ function createLangfuseProcessor(): unknown | null {
     const scope = typeof span.instrumentationScope?.name === 'string' ? span.instrumentationScope.name : '';
     const spanName = span.name ?? 'unknown';
     const traceId = span.spanContext?.()?.traceId ?? span._spanContext?.traceId ?? ''; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- runtime shape varies
-    const shouldExport = scope === 'ai';
+    const shouldExport =
+      scope === 'ai' || (fullStack && (FULL_STACK_EXTRA_SCOPES as readonly string[]).includes(scope));
     if (shouldExport) {
       const hasTraceInput = !!span.attributes?.['langfuse.trace.input'];
       const hasTraceName = !!span.attributes?.['langfuse.trace.name'];
-      langfuseLogger.debug`${`[${traceId}] export span=${spanName} hasTraceInput=${hasTraceInput} hasTraceName=${hasTraceName}`}`;
+      langfuseLogger.debug`${`[${traceId}] export scope=${scope} span=${spanName} hasTraceInput=${hasTraceInput} hasTraceName=${hasTraceName}`}`;
     }
     return shouldExport;
   };
@@ -236,8 +267,19 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
     spanProcessors.push(new SimpleSpanProcessor(new MinimalSpanExporter()));
   }
 
+  // HTTP instrumentation is opt-in (OTEL_HTTP_INSTRUMENTATION=true) because it
+  // adds measurable per-request overhead + a non-trivial span volume. Default off
+  // preserves the historical behavior. Apps that want full http→grpc→llm trace
+  // correlation (typical RCA / observability use case) opt in.
+  const httpInstrumentationEnabled = getStringFromEnv('OTEL_HTTP_INSTRUMENTATION') === 'true';
+
   const instrumentations: unknown[] = [];
   if (GrpcInstrumentation) instrumentations.push(new GrpcInstrumentation());
+  if (httpInstrumentationEnabled && HttpInstrumentation) {
+    instrumentations.push(new HttpInstrumentation());
+  } else if (httpInstrumentationEnabled && !HttpInstrumentation) {
+    otelLogger.warning`${'OTEL_HTTP_INSTRUMENTATION=true but @opentelemetry/instrumentation-http not installed'}`;
+  }
 
   const sdk = new NodeSDK({
     spanProcessors: spanProcessors as never[],
@@ -248,7 +290,8 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
 
   try {
     sdk.start();
-    otelLogger.info`${`started${GrpcInstrumentation ? ' + gRPC' : ''}${langfuseProcessor ? ' + Langfuse' : ''}`}`;
+    const httpLabel = httpInstrumentationEnabled && HttpInstrumentation ? ' + HTTP' : '';
+    otelLogger.info`${`started${GrpcInstrumentation ? ' + gRPC' : ''}${httpLabel}${langfuseProcessor ? ' + Langfuse' : ''}`}`;
   } catch (error) {
     otelLogger.error`${`failed: ${error instanceof Error ? error.message : String(error)}`}`;
     return;
