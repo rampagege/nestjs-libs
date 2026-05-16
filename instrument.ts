@@ -37,7 +37,10 @@
  * - APP_OTEL_HTTP_INSTRUMENTATION_ENABLED: opt-in 'true' 注册
  *     @opentelemetry/instrumentation-http (按需安装) 让 inbound/outbound HTTP 请求
  *     自动创建 span。默认不开（避免额外 per-request overhead + span 量上涨）。
- *     兼容旧名 `OTEL_HTTP_INSTRUMENTATION` (已 deprecated)。
+ *     注意: span name 保持 OTel semconv 默认（method-only，如 "GET" / "POST"）。
+ *     路由信息在 `http.target` / `url.path` 属性里，按属性聚合即可；需要路由模板
+ *     (`GET /users/:id`) 的应用应注册框架层 instrumentation（NestJS / Express），
+ *     由它在路由匹配后填 `http.route` 并 enrich span name。
  * - SENTRY_DSN: Sentry DSN（启用 Sentry 接管 OTel + 错误追踪）
  *
  * 注意事项：
@@ -49,6 +52,8 @@
 // 必须最先执行：加载 .env 文件到 process.env
 // 在所有 Schema.Config / getLogger 之前
 import { configureLogging } from '@app/nest/logging';
+
+import { isFullStackExtraScope } from './instrument-helpers';
 
 import { config as dotenvConfig } from '@dotenvx/dotenvx';
 import { getLogger } from '@logtape/logtape';
@@ -131,67 +136,6 @@ function configureDiagLogLevel() {
       diag.disable();
     }
   }
-}
-
-/**
- * Span scope matchers that are NOT scope='ai' but still useful for cross-service
- * trace correlation in Langfuse. Opt-in via LANGFUSE_EXPORT_FULL_STACK=true.
- *
- * Why opt-in: each non-'ai' scope adds spans → larger Langfuse footprint. Default
- * preserves the historical AI-only filter so existing consumers don't see a span
- * volume / cost regression. Apps that *want* to see the full http→grpc→db trace
- * alongside the LLM call (typical RCA scenario) set the env flag.
- *
- * Coverage:
- * - `@opentelemetry/instrumentation-grpc` — auto-registered here (opt-in via
- *   GrpcInstrumentation try/require)
- * - `@opentelemetry/instrumentation-http` — auto-registered here (opt-in via
- *   APP_OTEL_HTTP_INSTRUMENTATION_ENABLED + HttpInstrumentation try/require)
- * - `prisma` / `@prisma/instrumentation` — **NOT auto-registered by this file**.
- *   Caller (host app) creates these spans, either via manual
- *   `trace.getTracer('prisma')` (calo-server convention, see
- *   `src/infrastructure/prisma/with-trace.extension.ts`) or by registering
- *   `@opentelemetry/instrumentation-prisma`. Different mechanisms use different
- *   scope strings — accept both via prefix match.
- */
-function isFullStackExtraScope(scope: string): boolean {
-  return (
-    scope === '@opentelemetry/instrumentation-grpc' ||
-    scope === '@opentelemetry/instrumentation-http' ||
-    scope === 'prisma' ||
-    scope.startsWith('@prisma/')
-  );
-}
-
-/**
- * Squash high-cardinality path segments so OTel span names stay aggregatable.
- *
- * Otherwise REST paths with ids would produce one span name per record:
- *   `http.GET /users/123` / `http.GET /users/456` / ...
- *
- * Replacements (intentionally minimal — apps wanting full route templates
- * should layer their own router-aware sanitization downstream):
- * - numeric segments → `:id`     (e.g. `/users/123` → `/users/:id`)
- * - UUID v4 / cuid / 32+ hex     → `:id`
- * - long opaque tokens (>= 16 chars, base32/64-ish) → `:id`
- */
-function sanitizeHttpPathForSpanName(path: string): string {
-  if (!path) return path;
-  return path
-    .split('/')
-    .map((seg) => {
-      if (!seg) return seg;
-      // pure numeric
-      if (/^\d+$/.test(seg)) return ':id';
-      // UUID (8-4-4-4-12 hex)
-      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seg)) return ':id';
-      // long hex (32+ chars: trace ids, sha256 prefixes etc.)
-      if (/^[0-9a-f]{32,}$/i.test(seg)) return ':id';
-      // long opaque tokens (>=16 chars, base32/base64url alphabet, mixed case+digit)
-      if (seg.length >= 16 && /^[A-Za-z0-9_-]+$/.test(seg) && /\d/.test(seg) && /[A-Za-z]/.test(seg)) return ':id';
-      return seg;
-    })
-    .join('/');
 }
 
 function createLangfuseProcessor(): unknown | null {
@@ -322,16 +266,9 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
   // preserves the historical behavior. Apps that want full http→grpc→llm trace
   // correlation (typical RCA / observability use case) opt in.
   //
-  // Env name: APP_ prefix avoids the OTEL_* namespace reserved by the OpenTelemetry
-  // SDK spec (future spec additions could otherwise silently collide). Legacy name
-  // `OTEL_HTTP_INSTRUMENTATION` is still accepted for backward compatibility and
-  // emits a deprecation warning when used.
-  const httpEnvNew = getStringFromEnv('APP_OTEL_HTTP_INSTRUMENTATION_ENABLED');
-  const httpEnvLegacy = getStringFromEnv('OTEL_HTTP_INSTRUMENTATION');
-  if (!httpEnvNew && httpEnvLegacy === 'true') {
-    otelLogger.warning`${'OTEL_HTTP_INSTRUMENTATION is deprecated; use APP_OTEL_HTTP_INSTRUMENTATION_ENABLED'}`;
-  }
-  const httpInstrumentationEnabled = (httpEnvNew ?? httpEnvLegacy) === 'true';
+  // Env name uses APP_ prefix to avoid the OTEL_* namespace reserved by the
+  // OpenTelemetry SDK spec (future spec additions could otherwise silently collide).
+  const httpInstrumentationEnabled = getStringFromEnv('APP_OTEL_HTTP_INSTRUMENTATION_ENABLED') === 'true';
 
   // Coupling guard: LANGFUSE_EXPORT_FULL_STACK=true expects HTTP scope spans to
   // exist; if HTTP instrumentation isn't enabled, the http allowlist entry is
@@ -347,44 +284,25 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
   const instrumentations: unknown[] = [];
   if (GrpcInstrumentation) instrumentations.push(new GrpcInstrumentation());
   if (httpInstrumentationEnabled && HttpInstrumentation) {
-    // requestHook renames span from default "POST" / "GET" to "http.{METHOD} {path}"
-    // with high-cardinality path segments squashed to placeholders.
+    // Span name stays at OTel semconv default ("GET" / "POST" / ...) — method only.
     //
-    // Default @opentelemetry/instrumentation-http span names are method-only, which
-    // makes traces with many routes hard to scan. The "http.{method} {path}" form
-    // is what most OTel ecosystems (Datadog/Honeycomb/Tempo dashboards) expect and
-    // matches typical span-naming conventions.
+    // Why not enrich with the path here:
+    // - HTTP instrumentation has no router context (Express/Nest haven't matched
+    //   the route yet when this fires). Any path embedded in span name is either
+    //   the raw URL (cardinality bomb: `/users/123` / `/users/456` / …) or a
+    //   regex-sanitized approximation (false positives on slugs, false negatives
+    //   on unfamiliar ID formats).
+    // - OTel semantic conventions say span name should be `{method} {http.route}`
+    //   where `http.route` is the route template — that's the **framework
+    //   instrumentation's** job (e.g. `@opentelemetry/instrumentation-nestjs-core`),
+    //   not the HTTP layer's.
+    // - Path / target is still available on the span via standard attributes
+    //   (`http.target`, `url.path`, eventually `http.route`). Dashboards group
+    //   by attribute when they need per-route p99.
     //
-    // Path is sanitized to bound span-name cardinality: REST URLs with numeric ids,
-    // UUIDs, or hex-token segments would otherwise generate one span name per
-    // record (`http.GET /users/123`, `http.GET /users/456`, …). All Langfuse /
-    // Sentry / Datadog dashboards aggregate by span name; high cardinality there
-    // gets you billed, sampled, or rate-limited. Squash to `/:id` / `/:hash`.
-    // This is intentionally minimal (no router table) — apps with truly RESTful
-    // path templates may want richer sanitization downstream.
-    //
-    // Hook is intentionally tiny + never throws (hot path runs on every request).
-    const HttpInst = HttpInstrumentation;
-    instrumentations.push(
-      new HttpInst({
-        requestHook: (span: { updateName: (n: string) => void }, request: unknown) => {
-          try {
-            // server inbound IncomingMessage: { method, url }
-            // client outbound ClientRequest: { method, path }
-            const r = request as { method?: string; url?: string; path?: string };
-            const method = r.method;
-            if (!method) return;
-            const target = r.path ?? r.url ?? '';
-            const qIdx = target.indexOf('?');
-            const rawPath = qIdx >= 0 ? target.slice(0, qIdx) : target;
-            const sanitized = sanitizeHttpPathForSpanName(rawPath);
-            span.updateName(sanitized ? `http.${method} ${sanitized}` : `http.${method}`);
-          } catch {
-            // never throw from a hot path hook
-          }
-        },
-      }),
-    );
+    // Apps that want span name like `GET /users/:id` should install framework
+    // instrumentation that resolves the route template and enriches the span.
+    instrumentations.push(new HttpInstrumentation());
   } else if (httpInstrumentationEnabled && !HttpInstrumentation) {
     otelLogger.warning`${'APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true but @opentelemetry/instrumentation-http not installed'}`;
   }
