@@ -142,7 +142,7 @@ function createLangfuseProcessor(): unknown | null {
   const enabled = getStringFromEnv('LANGFUSE_ENABLED');
   if (enabled !== 'true') return null;
   if (!LangfuseSpanProcessor) {
-    langfuseLogger.warning`${'@langfuse/otel not available'}`;
+    langfuseLogger.warning`@langfuse/otel not available`;
     return null;
   }
 
@@ -150,13 +150,13 @@ function createLangfuseProcessor(): unknown | null {
   const secretKey = getStringFromEnv('LANGFUSE_SECRET_KEY');
   const baseUrl = getStringFromEnv('LANGFUSE_BASE_URL') ?? getStringFromEnv('LANGFUSE_BASEURL');
   if (!publicKey || !secretKey || !baseUrl) {
-    langfuseLogger.warning`${'missing credentials'}`;
+    langfuseLogger.warning`missing credentials`;
     return null;
   }
 
   const environmentTag = getStringFromEnv('LANGFUSE_TRACING_ENVIRONMENT') ?? process.env.NODE_ENV ?? 'dev';
   const fullStack = getStringFromEnv('LANGFUSE_EXPORT_FULL_STACK') === 'true';
-  langfuseLogger.info`${`enabled host=${baseUrl} env=${environmentTag} fullStack=${fullStack}`}`;
+  langfuseLogger.info`enabled host=${baseUrl} env=${environmentTag} fullStack=${fullStack}`;
 
   // Default: only export scope='ai' spans (LLM / Vercel AI SDK telemetry).
   // Opt-in LANGFUSE_EXPORT_FULL_STACK=true also exports gRPC client + HTTP +
@@ -176,7 +176,7 @@ function createLangfuseProcessor(): unknown | null {
     if (shouldExport) {
       const hasTraceInput = !!span.attributes?.['langfuse.trace.input'];
       const hasTraceName = !!span.attributes?.['langfuse.trace.name'];
-      langfuseLogger.debug`${`[${traceId}] export scope=${scope} span=${spanName} hasTraceInput=${hasTraceInput} hasTraceName=${hasTraceName}`}`;
+      langfuseLogger.debug`[${traceId}] export scope=${scope} span=${spanName} hasTraceInput=${hasTraceInput} hasTraceName=${hasTraceName}`;
     }
     return shouldExport;
   };
@@ -241,9 +241,9 @@ function bootstrapSentry() {
       integrations: (defaults: Array<{ name: string }>) => defaults.filter((i) => i.name !== 'NodeSystemError'),
     });
 
-    sentryLogger.info`${`enabled (errors only) server=${serverName ?? 'unknown'} env=${environment}`}`;
+    sentryLogger.info`enabled (errors only) server=${serverName ?? 'unknown'} env=${environment}`;
   } catch (error) {
-    sentryLogger.error`${`init failed: ${error instanceof Error ? error.message : String(error)}`}`;
+    sentryLogger.error`init failed: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
 
@@ -257,7 +257,7 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
   const spanProcessors: unknown[] = [];
   if (langfuseProcessor) spanProcessors.push(langfuseProcessor);
   if (spanProcessors.length === 0) {
-    otelLogger.debug`${'no processors, using minimal exporter'}`;
+    otelLogger.debug`no processors, using minimal exporter`;
     spanProcessors.push(new SimpleSpanProcessor(new MinimalSpanExporter()));
   }
 
@@ -277,7 +277,7 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
   if (langfuseProcessor) {
     const fullStackOn = getStringFromEnv('LANGFUSE_EXPORT_FULL_STACK') === 'true';
     if (fullStackOn && !httpInstrumentationEnabled) {
-      otelLogger.warning`${'LANGFUSE_EXPORT_FULL_STACK=true but HTTP instrumentation is off — no spans from @opentelemetry/instrumentation-http will be created or exported. Set APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true to enable.'}`;
+      otelLogger.warning`LANGFUSE_EXPORT_FULL_STACK=true but HTTP instrumentation is off — no spans from @opentelemetry/instrumentation-http will be created or exported. Set APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true to enable.`;
     }
   }
 
@@ -304,7 +304,7 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
     // instrumentation that resolves the route template and enriches the span.
     instrumentations.push(new HttpInstrumentation());
   } else if (httpInstrumentationEnabled && !HttpInstrumentation) {
-    otelLogger.warning`${'APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true but @opentelemetry/instrumentation-http not installed'}`;
+    otelLogger.warning`APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true but @opentelemetry/instrumentation-http not installed`;
   }
 
   const sdk = new NodeSDK({
@@ -317,18 +317,18 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
   try {
     sdk.start();
     const httpLabel = httpInstrumentationEnabled && HttpInstrumentation ? ' + HTTP' : '';
-    otelLogger.info`${`started${GrpcInstrumentation ? ' + gRPC' : ''}${httpLabel}${langfuseProcessor ? ' + Langfuse' : ''}`}`;
+    otelLogger.info`started${GrpcInstrumentation ? ' + gRPC' : ''}${httpLabel}${langfuseProcessor ? ' + Langfuse' : ''}`;
   } catch (error) {
-    otelLogger.error`${`failed: ${error instanceof Error ? error.message : String(error)}`}`;
+    otelLogger.error`failed: ${error instanceof Error ? error.message : String(error)}`;
     return;
   }
 
   const shutdown = async () => {
     try {
       await sdk.shutdown();
-      otelLogger.debug`${'shutdown complete'}`;
+      otelLogger.debug`shutdown complete`;
     } catch (error) {
-      otelLogger.error`${`shutdown failed: ${error instanceof Error ? error.message : String(error)}`}`;
+      otelLogger.error`shutdown failed: ${error instanceof Error ? error.message : String(error)}`;
     }
   };
 
@@ -341,14 +341,37 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
 
 // ==================== Bootstrap ====================
 
+/**
+ * Idempotency guard — instrument.ts runs side effects at module load. If the
+ * module gets imported more than once (worker thread, vite/jest hot reload,
+ * test setup sequences, esm/cjs dual-resolution), running bootstrap twice
+ * would:
+ *
+ *   - register Sentry global handlers twice → noisy beforeSend dedup
+ *   - start two NodeSDK instances → two TracerProviders, undefined behavior
+ *   - re-attach two SIGTERM / beforeExit shutdown listeners → double flush
+ *   - re-instantiate GrpcInstrumentation / HttpInstrumentation → double-patch
+ *     of `http` / `grpc` core modules
+ *
+ * Track with a module-level boolean; skip subsequent calls with a debug log
+ * (warn would be alarming on test setups that legitimately re-import).
+ */
+let __bootstrapped = false;
+
 function bootstrapTracing() {
+  if (__bootstrapped) {
+    otelLogger.debug`bootstrapTracing skipped — already bootstrapped this process`;
+    return;
+  }
+  __bootstrapped = true;
+
   configureDiagLogLevel();
 
   // Sentry：仅错误追踪，不接管 OTel
   if (process.env.SENTRY_DSN) {
     bootstrapSentry();
   } else {
-    sentryLogger.debug`${'skipped (SENTRY_DSN not set)'}`;
+    sentryLogger.debug`skipped (SENTRY_DSN not set)`;
   }
 
   // OTel：独立 pipeline，Langfuse 100% 采样
