@@ -28,6 +28,19 @@
  * - OTEL_LOG_LEVEL: OpenTelemetry 日志级别（设为 NONE 禁用）
  * - LANGFUSE_ENABLED: 启用 Langfuse（需要 @langfuse/otel）
  * - LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL: Langfuse 配置
+ * - LANGFUSE_EXPORT_FULL_STACK: opt-in 'true' 让 grpc / http / prisma scope 的 span
+ *     也导出到 Langfuse（默认仅 scope='ai'）。用于全栈 trace 关联 / RCA 场景。
+ *     注意: prisma scope 由 caller 自己创 (manual `trace.getTracer('prisma')` 或
+ *     `@opentelemetry/instrumentation-prisma`)，此文件不自动注册 Prisma instrumentation。
+ *     http scope 依赖 APP_OTEL_HTTP_INSTRUMENTATION_ENABLED 同时打开 — 只设
+ *     LANGFUSE_EXPORT_FULL_STACK 而不开 HTTP instrumentation 会启动时 warn 提示。
+ * - APP_OTEL_HTTP_INSTRUMENTATION_ENABLED: opt-in 'true' 注册
+ *     @opentelemetry/instrumentation-http (按需安装) 让 inbound/outbound HTTP 请求
+ *     自动创建 span。默认不开（避免额外 per-request overhead + span 量上涨）。
+ *     注意: span name 保持 OTel semconv 默认（method-only，如 "GET" / "POST"）。
+ *     路由信息在 `http.target` / `url.path` 属性里，按属性聚合即可；需要路由模板
+ *     (`GET /users/:id`) 的应用应注册框架层 instrumentation（NestJS / Express），
+ *     由它在路由匹配后填 `http.route` 并 enrich span name。
  * - SENTRY_DSN: Sentry DSN（启用 Sentry 接管 OTel + 错误追踪）
  *
  * 注意事项：
@@ -39,6 +52,8 @@
 // 必须最先执行：加载 .env 文件到 process.env
 // 在所有 Schema.Config / getLogger 之前
 import { configureLogging } from '@app/nest/logging';
+
+import { isFullStackExtraScope } from './instrument-helpers';
 
 import { config as dotenvConfig } from '@dotenvx/dotenvx';
 import { getLogger } from '@logtape/logtape';
@@ -76,6 +91,14 @@ try {
   GrpcInstrumentation = require('@opentelemetry/instrumentation-grpc').GrpcInstrumentation;
 } catch {
   // gRPC instrumentation not installed, skip
+}
+
+let HttpInstrumentation: (new (opts?: unknown) => unknown) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- optional dependency
+  HttpInstrumentation = require('@opentelemetry/instrumentation-http').HttpInstrumentation;
+} catch {
+  // HTTP instrumentation not installed, skip
 }
 
 let LangfuseSpanProcessor: (new (opts: unknown) => unknown) | null = null;
@@ -132,10 +155,12 @@ function createLangfuseProcessor(): unknown | null {
   }
 
   const environmentTag = getStringFromEnv('LANGFUSE_TRACING_ENVIRONMENT') ?? process.env.NODE_ENV ?? 'dev';
-  langfuseLogger.info`${`enabled host=${baseUrl} env=${environmentTag}`}`;
+  const fullStack = getStringFromEnv('LANGFUSE_EXPORT_FULL_STACK') === 'true';
+  langfuseLogger.info`${`enabled host=${baseUrl} env=${environmentTag} fullStack=${fullStack}`}`;
 
-  // Only export AI-related spans (scope='ai')
-
+  // Default: only export scope='ai' spans (LLM / Vercel AI SDK telemetry).
+  // Opt-in LANGFUSE_EXPORT_FULL_STACK=true also exports gRPC client + HTTP +
+  // Prisma spans so cross-service traces show the full request path in Langfuse.
   const shouldExportSpan = ({ otelSpan }: { otelSpan: Record<string, unknown> }) => {
     const span = otelSpan as {
       instrumentationScope?: { name?: string };
@@ -147,11 +172,11 @@ function createLangfuseProcessor(): unknown | null {
     const scope = typeof span.instrumentationScope?.name === 'string' ? span.instrumentationScope.name : '';
     const spanName = span.name ?? 'unknown';
     const traceId = span.spanContext?.()?.traceId ?? span._spanContext?.traceId ?? ''; // eslint-disable-line @typescript-eslint/no-unnecessary-condition -- runtime shape varies
-    const shouldExport = scope === 'ai';
+    const shouldExport = scope === 'ai' || (fullStack && isFullStackExtraScope(scope));
     if (shouldExport) {
       const hasTraceInput = !!span.attributes?.['langfuse.trace.input'];
       const hasTraceName = !!span.attributes?.['langfuse.trace.name'];
-      langfuseLogger.debug`${`[${traceId}] export span=${spanName} hasTraceInput=${hasTraceInput} hasTraceName=${hasTraceName}`}`;
+      langfuseLogger.debug`${`[${traceId}] export scope=${scope} span=${spanName} hasTraceInput=${hasTraceInput} hasTraceName=${hasTraceName}`}`;
     }
     return shouldExport;
   };
@@ -236,8 +261,51 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
     spanProcessors.push(new SimpleSpanProcessor(new MinimalSpanExporter()));
   }
 
+  // HTTP instrumentation is opt-in via APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true.
+  // Adds measurable per-request overhead + a non-trivial span volume — default off
+  // preserves the historical behavior. Apps that want full http→grpc→llm trace
+  // correlation (typical RCA / observability use case) opt in.
+  //
+  // Env name uses APP_ prefix to avoid the OTEL_* namespace reserved by the
+  // OpenTelemetry SDK spec (future spec additions could otherwise silently collide).
+  const httpInstrumentationEnabled = getStringFromEnv('APP_OTEL_HTTP_INSTRUMENTATION_ENABLED') === 'true';
+
+  // Coupling guard: LANGFUSE_EXPORT_FULL_STACK=true expects HTTP scope spans to
+  // exist; if HTTP instrumentation isn't enabled, the http allowlist entry is
+  // dead and Langfuse won't show the http layer of the trace. Warn explicitly so
+  // operators don't think full-stack export is broken.
+  if (langfuseProcessor) {
+    const fullStackOn = getStringFromEnv('LANGFUSE_EXPORT_FULL_STACK') === 'true';
+    if (fullStackOn && !httpInstrumentationEnabled) {
+      otelLogger.warning`${'LANGFUSE_EXPORT_FULL_STACK=true but HTTP instrumentation is off — no spans from @opentelemetry/instrumentation-http will be created or exported. Set APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true to enable.'}`;
+    }
+  }
+
   const instrumentations: unknown[] = [];
   if (GrpcInstrumentation) instrumentations.push(new GrpcInstrumentation());
+  if (httpInstrumentationEnabled && HttpInstrumentation) {
+    // Span name stays at OTel semconv default ("GET" / "POST" / ...) — method only.
+    //
+    // Why not enrich with the path here:
+    // - HTTP instrumentation has no router context (Express/Nest haven't matched
+    //   the route yet when this fires). Any path embedded in span name is either
+    //   the raw URL (cardinality bomb: `/users/123` / `/users/456` / …) or a
+    //   regex-sanitized approximation (false positives on slugs, false negatives
+    //   on unfamiliar ID formats).
+    // - OTel semantic conventions say span name should be `{method} {http.route}`
+    //   where `http.route` is the route template — that's the **framework
+    //   instrumentation's** job (e.g. `@opentelemetry/instrumentation-nestjs-core`),
+    //   not the HTTP layer's.
+    // - Path / target is still available on the span via standard attributes
+    //   (`http.target`, `url.path`, eventually `http.route`). Dashboards group
+    //   by attribute when they need per-route p99.
+    //
+    // Apps that want span name like `GET /users/:id` should install framework
+    // instrumentation that resolves the route template and enriches the span.
+    instrumentations.push(new HttpInstrumentation());
+  } else if (httpInstrumentationEnabled && !HttpInstrumentation) {
+    otelLogger.warning`${'APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true but @opentelemetry/instrumentation-http not installed'}`;
+  }
 
   const sdk = new NodeSDK({
     spanProcessors: spanProcessors as never[],
@@ -248,7 +316,8 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
 
   try {
     sdk.start();
-    otelLogger.info`${`started${GrpcInstrumentation ? ' + gRPC' : ''}${langfuseProcessor ? ' + Langfuse' : ''}`}`;
+    const httpLabel = httpInstrumentationEnabled && HttpInstrumentation ? ' + HTTP' : '';
+    otelLogger.info`${`started${GrpcInstrumentation ? ' + gRPC' : ''}${httpLabel}${langfuseProcessor ? ' + Langfuse' : ''}`}`;
   } catch (error) {
     otelLogger.error`${`failed: ${error instanceof Error ? error.message : String(error)}`}`;
     return;
