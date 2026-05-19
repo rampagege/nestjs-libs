@@ -131,6 +131,16 @@ try {
   // shouldn't happen — sdk-trace-node already imported above
 }
 
+// Resources / semconv 是 @opentelemetry/sdk-node transitive deps, 走 require 避免 TS
+// strict module resolution 报错 (libs 无 explicit deps 声明).
+let resourceFromAttributes: ((attrs: Record<string, string>) => unknown) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- transitive dep
+  resourceFromAttributes = require('@opentelemetry/resources').resourceFromAttributes;
+} catch {
+  // not available
+}
+
 // ==================== Loggers ====================
 const otelLogger = getLogger(['instrument', 'OpenTelemetry']);
 const langfuseLogger = getLogger(['instrument', 'Langfuse']);
@@ -371,7 +381,21 @@ function bootstrapOtel(langfuseProcessor: unknown | null, otlpProcessor: unknown
     otelLogger.warning`${'APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true but @opentelemetry/instrumentation-http not installed'}`;
   }
 
+  // Resource (service.name etc.) — autoDetectResources=false 让我们显式 build,
+  // 避免 HostDetector 这种慢 + cardinality 高的 detector. OTEL_SERVICE_NAME 标准 env,
+  // OTEL_SERVICE_VERSION 也带上方便 Tempo 按版本筛选 trace.
+  const serviceName = getStringFromEnv('OTEL_SERVICE_NAME') ?? process.env.APP_NAME ?? 'unknown_service';
+  const serviceVersion =
+    getStringFromEnv('OTEL_SERVICE_VERSION') ?? process.env.APP_VERSION ?? process.env.GITHUB_SHA ?? 'dev';
+  const resource = resourceFromAttributes
+    ? resourceFromAttributes({
+        'service.name': serviceName,
+        'service.version': serviceVersion,
+      })
+    : undefined;
+
   const sdk = new NodeSDK({
+    ...(resource ? { resource: resource as never } : {}),
     spanProcessors: spanProcessors as never[],
     instrumentations: instrumentations as never[],
     autoDetectResources: false,
@@ -382,7 +406,7 @@ function bootstrapOtel(langfuseProcessor: unknown | null, otlpProcessor: unknown
     sdk.start();
     const httpLabel = httpInstrumentationEnabled && HttpInstrumentation ? ' + HTTP' : '';
     const otlpLabel = otlpProcessor ? ' + OTLP' : '';
-    otelLogger.info`${`started${GrpcInstrumentation ? ' + gRPC' : ''}${httpLabel}${langfuseProcessor ? ' + Langfuse' : ''}${otlpLabel}`}`;
+    otelLogger.info`${`started service=${serviceName}@${serviceVersion}${GrpcInstrumentation ? ' + gRPC' : ''}${httpLabel}${langfuseProcessor ? ' + Langfuse' : ''}${otlpLabel}`}`;
   } catch (error) {
     otelLogger.error`${`failed: ${error instanceof Error ? error.message : String(error)}`}`;
     return;
