@@ -407,6 +407,23 @@ function bootstrapOtel(langfuseProcessor: unknown | null, otlpProcessor: unknown
     const httpLabel = httpInstrumentationEnabled && HttpInstrumentation ? ' + HTTP' : '';
     const otlpLabel = otlpProcessor ? ' + OTLP' : '';
     otelLogger.info`${`started service=${serviceName}@${serviceVersion}${GrpcInstrumentation ? ' + gRPC' : ''}${httpLabel}${langfuseProcessor ? ' + Langfuse' : ''}${otlpLabel}`}`;
+    // Debug: dump effective resource so we can confirm service.name was actually applied.
+    // NodeSDK 在 v2 偶有 resource field 不读的 case (esp 跟 detectors=[] 一起).
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const traceApi = require('@opentelemetry/api').trace;
+       
+      const tracerProvider = traceApi.getTracerProvider();
+       
+      const delegate = tracerProvider.getDelegate?.() ?? tracerProvider;
+       
+      const res = delegate?.resource ?? delegate?._resource;
+       
+      const attrs = res?.attributes ?? res?._attributes ?? '(no resource accessor)';
+      otelLogger.info`${`resource attrs = ${JSON.stringify(attrs)}`}`;
+    } catch (probe) {
+      otelLogger.debug`${`resource probe failed: ${probe instanceof Error ? probe.message : String(probe)}`}`;
+    }
   } catch (error) {
     otelLogger.error`${`failed: ${error instanceof Error ? error.message : String(error)}`}`;
     return;
