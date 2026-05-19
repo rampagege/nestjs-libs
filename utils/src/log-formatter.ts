@@ -11,6 +11,29 @@ import { r } from './logging';
 
 import { Temporal } from '@js-temporal/polyfill';
 
+// OTel API 是 peer dep. 用 require + try/catch 避免某些子 monorepo (e.g. nest 工具脚本)
+// 不装 @opentelemetry/api 时 import 直接炸. 拿不到就 fallback 到 undefined.
+let otelTrace: { getActiveSpan?: () => { spanContext: () => { traceId: string; spanId: string } } | undefined } | null =
+  null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  otelTrace = require('@opentelemetry/api').trace ?? null;
+} catch {
+  otelTrace = null;
+}
+
+/**
+ * 拿当前 active OTel span 的 traceId. Inject 到 log 行让 trace ↔ log 对账 (Grafana
+ * Tempo → Loki 跳转, ssh grep 等). 没有 active span 返回 undefined.
+ */
+function activeTraceId(): string | undefined {
+  if (!otelTrace?.getActiveSpan) return undefined;
+  const ctx = otelTrace.getActiveSpan()?.spanContext();
+  // OTel "invalid" traceId 是全 0, 跳过避免污染 log
+  if (!ctx?.traceId || ctx.traceId === '00000000000000000000000000000000') return undefined;
+  return ctx.traceId;
+}
+
 // ==================== ANSI Colors ====================
 
 const ansi = {
@@ -75,7 +98,8 @@ export function devFormatter(record: LogRecord): string {
   const contextParts: string[] = [];
   const { traceId, userId, spanName, contextTags } = record.properties;
   if (spanName && typeof spanName === 'string') contextParts.push(spanName);
-  if (traceId && typeof traceId === 'string') contextParts.push(traceId);
+  const effectiveTraceId = typeof traceId === 'string' && traceId ? traceId : activeTraceId();
+  if (effectiveTraceId) contextParts.push(effectiveTraceId);
   if (userId && typeof userId === 'string' && userId.trim().length > 0) contextParts.push(userId);
   // Extra context tags (from NestJS RequestContext non-standard fields)
   if (Array.isArray(contextTags)) {
@@ -153,6 +177,13 @@ export function prodFormatter(record: LogRecord): string {
   // Flatten properties (module, traceId, userId, spanName)
   for (const [k, v] of Object.entries(record.properties)) {
     if (v !== undefined && v !== null) entry[k] = v;
+  }
+
+  // 若 properties 里没 traceId, 从 OTel active span 自动补. Loki 按 traceId 索引
+  // 就能跟 Tempo 联动 (Grafana data source tracesToLogsV2).
+  if (!entry.traceId) {
+    const tid = activeTraceId();
+    if (tid) entry.traceId = tid;
   }
 
   return JSON.stringify(entry);
