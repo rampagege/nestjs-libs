@@ -10,6 +10,7 @@
  * - LogTape 日志初始化（必须在所有模块 import 前完成）
  * - gRPC 请求自动 tracing + traceparent 传播
  * - 可选：Langfuse span 导出（AI 相关 span）
+ * - 可选：通用 OTLP HTTP exporter 推 trace 到 Tempo/Jaeger/Datadog 等任意 OTLP 后端
  * - 可选：Sentry 错误追踪 + OTel 接管
  *
  * OTel 策略（二选一，由 SENTRY_DSN 决定）：
@@ -41,6 +42,11 @@
  *     路由信息在 `http.target` / `url.path` 属性里，按属性聚合即可；需要路由模板
  *     (`GET /users/:id`) 的应用应注册框架层 instrumentation（NestJS / Express），
  *     由它在路由匹配后填 `http.route` 并 enrich span name。
+ * - OTEL_EXPORTER_OTLP_ENDPOINT: opt-in OTLP HTTP 推送地址 (e.g. http://tempo:4318/v1/traces)
+ *     需安装 @opentelemetry/exporter-trace-otlp-http. 跟 Langfuse 并行挂 SpanProcessor,
+ *     同一份 span 多路导出. 设此 env 即开启, 不设则跳过.
+ * - OTEL_EXPORTER_OTLP_HEADERS: 可选 OTLP headers 鉴权, 标准 OTel env 格式
+ *     (key1=value1,key2=value2). 自托管 Tempo 内网通常不需要.
  * - SENTRY_DSN: Sentry DSN（启用 Sentry 接管 OTel + 错误追踪）
  *
  * 注意事项：
@@ -107,6 +113,22 @@ try {
   LangfuseSpanProcessor = require('@langfuse/otel').LangfuseSpanProcessor;
 } catch {
   // Langfuse not installed, skip
+}
+
+let OTLPTraceExporter: (new (opts?: unknown) => SpanExporter) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- optional dependency
+  OTLPTraceExporter = require('@opentelemetry/exporter-trace-otlp-http').OTLPTraceExporter;
+} catch {
+  // OTLP HTTP exporter not installed, skip
+}
+
+let BatchSpanProcessor: (new (exporter: SpanExporter) => unknown) | null = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- bundled with sdk-trace-node
+  BatchSpanProcessor = require('@opentelemetry/sdk-trace-node').BatchSpanProcessor;
+} catch {
+  // shouldn't happen — sdk-trace-node already imported above
 }
 
 // ==================== Loggers ====================
@@ -184,6 +206,47 @@ function createLangfuseProcessor(): unknown | null {
   return new LangfuseSpanProcessor({ publicKey, secretKey, baseUrl, shouldExportSpan });
 }
 
+/**
+ * Generic OTLP HTTP exporter — 推 trace 到任意 OTLP 后端 (Tempo / Jaeger / Datadog / etc).
+ *
+ * 启用: 设 `OTEL_EXPORTER_OTLP_ENDPOINT` (OpenTelemetry SDK 标准 env, 不加前缀).
+ * 例: `http://192.168.2.118:4318/v1/traces`
+ *
+ * 鉴权 (可选): `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer xxx,X-Scope-OrgID=1`
+ * (逗号分隔的 key=value pairs)
+ *
+ * 实现: BatchSpanProcessor + OTLP HTTP exporter — 跟 Langfuse processor 并行挂上,
+ * 同一份 span 一份给 Langfuse (AI scope filter), 一份给 OTLP backend (全栈).
+ *
+ * MIS-423 Sprint 1 — 让 staging trace 进自托管 Tempo, 跟 Loki/Prometheus stack 关联.
+ */
+function createOtlpProcessor(): unknown | null {
+  const endpoint = getStringFromEnv('OTEL_EXPORTER_OTLP_ENDPOINT');
+  if (!endpoint) return null;
+  if (!OTLPTraceExporter || !BatchSpanProcessor) {
+    otelLogger.warning`${`OTEL_EXPORTER_OTLP_ENDPOINT set (${endpoint}) but @opentelemetry/exporter-trace-otlp-http not installed`}`;
+    return null;
+  }
+
+  // Standard OTEL_EXPORTER_OTLP_HEADERS env: comma-separated key=value pairs.
+  // SDK 默认自己解析这个 env (passing undefined headers 等于让 SDK 读 env). 但显式
+  // 解析后 logger 看得更清楚, 也便于将来加自定义 headers.
+  const headersEnv = getStringFromEnv('OTEL_EXPORTER_OTLP_HEADERS');
+  const headers: Record<string, string> = {};
+  if (headersEnv) {
+    for (const pair of headersEnv.split(',')) {
+      const idx = pair.indexOf('=');
+      if (idx > 0) {
+        headers[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim();
+      }
+    }
+  }
+
+  otelLogger.info`${`OTLP exporter enabled endpoint=${endpoint} headers=${Object.keys(headers).length}`}`;
+  const exporter = new OTLPTraceExporter({ url: endpoint, headers });
+  return new BatchSpanProcessor(exporter);
+}
+
 // ==================== Sentry 错误追踪（独立于 OTel） ====================
 
 const noisyPatterns = [
@@ -253,9 +316,10 @@ function bootstrapSentry() {
  * 独立的 OTel pipeline，不受 Sentry 采样率影响。
  * 所有 span 100% recording → shouldExportSpan 只导出 scope='ai' 给 Langfuse。
  */
-function bootstrapOtel(langfuseProcessor: unknown | null) {
+function bootstrapOtel(langfuseProcessor: unknown | null, otlpProcessor: unknown | null) {
   const spanProcessors: unknown[] = [];
   if (langfuseProcessor) spanProcessors.push(langfuseProcessor);
+  if (otlpProcessor) spanProcessors.push(otlpProcessor);
   if (spanProcessors.length === 0) {
     otelLogger.debug`${'no processors, using minimal exporter'}`;
     spanProcessors.push(new SimpleSpanProcessor(new MinimalSpanExporter()));
@@ -317,7 +381,8 @@ function bootstrapOtel(langfuseProcessor: unknown | null) {
   try {
     sdk.start();
     const httpLabel = httpInstrumentationEnabled && HttpInstrumentation ? ' + HTTP' : '';
-    otelLogger.info`${`started${GrpcInstrumentation ? ' + gRPC' : ''}${httpLabel}${langfuseProcessor ? ' + Langfuse' : ''}`}`;
+    const otlpLabel = otlpProcessor ? ' + OTLP' : '';
+    otelLogger.info`${`started${GrpcInstrumentation ? ' + gRPC' : ''}${httpLabel}${langfuseProcessor ? ' + Langfuse' : ''}${otlpLabel}`}`;
   } catch (error) {
     otelLogger.error`${`failed: ${error instanceof Error ? error.message : String(error)}`}`;
     return;
@@ -351,9 +416,11 @@ function bootstrapTracing() {
     sentryLogger.debug`${'skipped (SENTRY_DSN not set)'}`;
   }
 
-  // OTel：独立 pipeline，Langfuse 100% 采样
+  // OTel：独立 pipeline. Langfuse / OTLP backend (Tempo/Jaeger/etc) 各自挂自己的
+  // SpanProcessor — 同一份 span 多路导出.
   const langfuseProcessor = createLangfuseProcessor();
-  bootstrapOtel(langfuseProcessor);
+  const otlpProcessor = createOtlpProcessor();
+  bootstrapOtel(langfuseProcessor, otlpProcessor);
 }
 
 bootstrapTracing();
