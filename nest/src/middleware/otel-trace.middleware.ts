@@ -19,6 +19,7 @@
  */
 import { context, propagation, SpanKind, trace } from '@opentelemetry/api';
 
+import type { Span } from '@opentelemetry/api';
 import type { NextFunction, Request, Response } from 'express';
 
 const tracer = trace.getTracer('http-server');
@@ -27,6 +28,56 @@ function writeTraceHeaders(res: Response, traceId: string, spanId: string): void
   // W3C Trace Context 标准格式: 00-{traceId}-{spanId}-{flags}，flags: 01 表示已采样
   res.setHeader('traceparent', `00-${traceId}-${spanId}-01`);
   res.setHeader('X-Trace-Id', traceId);
+}
+
+/**
+ * Sandbox-origin trace 自动 tag 检测（MIS-423 Phase 3 fixture provenance）
+ *
+ * calo-sandbox 发请求时挂以下 header：
+ *   X-Client-Type: sandbox
+ *   X-Sandbox-Source: scenario | eval
+ *   X-Sandbox-Scenario: <scenario id>           (scenario runner)
+ *   X-Sandbox-Eval: <eval id>                   (eval runner)
+ *   X-Sandbox-Workspace: staging                (scenario runner)
+ *
+ * 中间件检测到任一 sandbox 标识就给 trace 打 tags，下游 observability-mcp
+ * `replay_to_fixture` 用 `tags.includes('sandbox-origin')` 过滤来源——
+ * sandbox-origin trace 用合成 family、零真实用户 PII，可直接抽 fixture
+ * 进 git；prod-origin 走 redaction + opt-in 路径。
+ *
+ * 仅识别 string 值的 header；express 多值场景给 array 时跳过，避免
+ * 异常输入污染 tag 列表。
+ */
+export function detectSandboxTags(req: Request): string[] | undefined {
+  const clientType = req.headers['x-client-type'];
+  const sandboxSource = req.headers['x-sandbox-source'];
+
+  const isSandboxClient = clientType === 'sandbox';
+  const hasSandboxSource = typeof sandboxSource === 'string';
+  if (!isSandboxClient && !hasSandboxSource) return undefined;
+
+  const tags: string[] = ['sandbox-origin'];
+  if (hasSandboxSource) tags.push(`source:${sandboxSource}`);
+
+  const scenario = req.headers['x-sandbox-scenario'];
+  if (typeof scenario === 'string') tags.push(`scenario:${scenario}`);
+
+  const evalId = req.headers['x-sandbox-eval'];
+  if (typeof evalId === 'string') tags.push(`eval:${evalId}`);
+
+  const workspace = req.headers['x-sandbox-workspace'];
+  if (typeof workspace === 'string') tags.push(`workspace:${workspace}`);
+
+  return tags;
+}
+
+/**
+ * 把 sandbox tag 写到 root span 上。Langfuse OTel exporter 把
+ * `ai.telemetry.metadata.tags` 升格为 trace 级 tags（同 AI SDK convention）。
+ */
+function applySandboxTags(span: Span, req: Request): void {
+  const tags = detectSandboxTags(req);
+  if (tags) span.setAttribute('ai.telemetry.metadata.tags', tags);
 }
 
 export function otelTraceMiddleware(req: Request, res: Response, next: NextFunction): void {
@@ -47,6 +98,7 @@ export function otelTraceMiddleware(req: Request, res: Response, next: NextFunct
     if (activeSpan) {
       const { traceId, spanId } = activeSpan.spanContext();
       writeTraceHeaders(res, traceId, spanId);
+      applySandboxTags(activeSpan, req);
     }
     next();
     return;
@@ -63,6 +115,7 @@ export function otelTraceMiddleware(req: Request, res: Response, next: NextFunct
 
   // 在 next() 之前写 header，保证 guard 异常路径也能拿到 —— filter 渲染错误响应时 header 已就位
   writeTraceHeaders(res, traceId, spanId);
+  applySandboxTags(span, req);
 
   // 在 span context 下执行后续 middleware/handler
   context.with(spanCtx, () => {

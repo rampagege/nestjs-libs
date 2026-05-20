@@ -7,8 +7,9 @@
  * 2. traceId 格式合法（W3C 32 字符 hex）
  * 3. 健康检查路径：不建 span 也不写 header（next 直接调用）
  * 4. Sentry 模式（SENTRY_DSN 已配置）：不自建 span，读取 active span（Sentry 建的）后写 header
+ * 5. Sandbox 自动打 tag：检测 X-Client-Type / X-Sandbox-* header → ['sandbox-origin', ...]
  */
-import { otelTraceMiddleware } from './otel-trace.middleware';
+import { detectSandboxTags, otelTraceMiddleware } from './otel-trace.middleware';
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 
@@ -172,6 +173,63 @@ describe('otelTraceMiddleware', () => {
 
       expect(next).toHaveBeenCalled();
       expect(res.setHeader).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // detectSandboxTags —— 纯函数提取，便于单测；中间件里 setAttribute 的实际写入
+  // 不在本 spec 验证（需要真实 OTel SDK），靠 stg 集成 trace 复查。
+  // ---------------------------------------------------------------------------
+  describe('detectSandboxTags', () => {
+    it('无 sandbox header → undefined', () => {
+      const req = createMockReq('/graphql', { 'user-agent': 'iPhone' });
+      expect(detectSandboxTags(req)).toBeUndefined();
+    });
+
+    it('X-Client-Type: sandbox → ["sandbox-origin"]', () => {
+      const req = createMockReq('/graphql', { 'x-client-type': 'sandbox' });
+      expect(detectSandboxTags(req)).toEqual(['sandbox-origin']);
+    });
+
+    it('X-Sandbox-Source 单独存在 → ["sandbox-origin", "source:..."]', () => {
+      const req = createMockReq('/graphql', { 'x-sandbox-source': 'scenario' });
+      expect(detectSandboxTags(req)).toEqual(['sandbox-origin', 'source:scenario']);
+    });
+
+    it('完整 scenario header 组合 → 4 tag', () => {
+      const req = createMockReq('/graphql', {
+        'x-client-type': 'sandbox',
+        'x-sandbox-source': 'scenario',
+        'x-sandbox-scenario': 'core-greeting-001',
+        'x-sandbox-workspace': 'staging',
+      });
+      expect(detectSandboxTags(req)).toEqual([
+        'sandbox-origin',
+        'source:scenario',
+        'scenario:core-greeting-001',
+        'workspace:staging',
+      ]);
+    });
+
+    it('完整 eval header 组合', () => {
+      const req = createMockReq('/graphql', {
+        'x-client-type': 'sandbox',
+        'x-sandbox-source': 'eval',
+        'x-sandbox-eval': 'followup-quality-v3',
+      });
+      expect(detectSandboxTags(req)).toEqual(['sandbox-origin', 'source:eval', 'eval:followup-quality-v3']);
+    });
+
+    it('client-type 不是 sandbox 且无 sandbox-source → undefined', () => {
+      const req = createMockReq('/graphql', { 'x-client-type': 'ios' });
+      expect(detectSandboxTags(req)).toBeUndefined();
+    });
+
+    it('header 值非 string（数组/重复 header）→ 忽略，不进 tag', () => {
+      const req = createMockReq('/graphql', {});
+      // express 在多值 header 下可能给数组，模拟之
+      (req.headers as Record<string, unknown>)['x-client-type'] = ['sandbox', 'ios'];
+      expect(detectSandboxTags(req)).toBeUndefined();
     });
   });
 });
