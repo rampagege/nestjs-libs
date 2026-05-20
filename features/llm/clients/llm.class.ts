@@ -36,6 +36,7 @@ import { EMBEDDING_MODELS } from '../types/embedding.types';
 import { DEFAULT_SUPPORTED_TIERS, getModel, parseModelSpec } from '../types/model.types';
 import { getCostFromUsage } from '../utils/cost-calculator';
 import { model as createModel, parseProvider } from './auto.client';
+import { mergeBaggageTags } from './baggage-tags';
 import { getOpenAI, getOpenRouter } from './llm.clients';
 import { disableThinkingOptions, reasoningEffortOptions } from './options.helpers';
 
@@ -834,7 +835,7 @@ export class LLM {
           maxOutputTokens,
           maxRetries: spec.maxRetries,
           abortSignal: signal,
-          experimental_telemetry: telemetry,
+          experimental_telemetry: mergeBaggageTags(telemetry),
         });
 
         cleanup();
@@ -1035,7 +1036,7 @@ export class LLM {
           maxOutputTokens,
           maxRetries: spec.maxRetries,
           abortSignal: signal,
-          experimental_telemetry: telemetry,
+          experimental_telemetry: mergeBaggageTags(telemetry),
         });
 
         cleanup();
@@ -1163,7 +1164,7 @@ export class LLM {
       maxOutputTokens,
       maxRetries: spec.maxRetries,
       abortSignal: signal,
-      experimental_telemetry: telemetry,
+      experimental_telemetry: mergeBaggageTags(telemetry),
       onError: ({ error }) => {
         cleanup();
         LLM.logError(id, 'streamObject', modelKey, error);
@@ -1241,7 +1242,7 @@ export class LLM {
       maxOutputTokens,
       maxRetries: spec.maxRetries,
       abortSignal: signal,
-      experimental_telemetry: telemetry,
+      experimental_telemetry: mergeBaggageTags(telemetry),
       onError: ({ error }) => {
         cleanup();
         LLM.logError(id, 'streamText', modelKey, error);
@@ -1368,7 +1369,7 @@ export class LLM {
           maxOutputTokens,
           maxRetries: spec.maxRetries,
           abortSignal: signal,
-          experimental_telemetry: telemetry,
+          experimental_telemetry: mergeBaggageTags(telemetry),
         });
 
         cleanup();
@@ -1535,7 +1536,7 @@ export class LLM {
       maxOutputTokens,
       maxRetries: spec.maxRetries,
       abortSignal: signal,
-      experimental_telemetry: telemetry,
+      experimental_telemetry: mergeBaggageTags(telemetry),
       onError: ({ error }) => {
         cleanup();
         LLM.logError(id, 'streamObjectViaTool', modelKey, error);

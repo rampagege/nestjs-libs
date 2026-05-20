@@ -19,8 +19,24 @@
  */
 import { context, propagation, SpanKind, trace } from '@opentelemetry/api';
 
-import type { Span } from '@opentelemetry/api';
+import type { Context, Span } from '@opentelemetry/api';
 import type { NextFunction, Request, Response } from 'express';
+
+/**
+ * Baggage key 用来跨进程携带 sandbox tags。
+ *
+ * 写入: 本中间件检测到 sandbox header 后, 把 JSON.stringify(tags) 塞进 baggage,
+ * W3C Baggage propagator 通过 gRPC metadata 自动透传到 calo-agents。
+ *
+ * 读取: calo-agents libs `features/llm/clients/baggage-tags.ts mergeBaggageTags`
+ * 在 LLM 调用前合并进 AI SDK `experimental_telemetry.metadata.tags`, 让 tag
+ * 落到 ai-scope span (Langfuse 唯一放行的 scope), 最终出现在 Langfuse trace.tags。
+ *
+ * 为什么走 baggage 而非 setAttribute on root span: HTTP root span scope='http-server',
+ * libs/instrument.ts shouldExportSpan 仅放 scope='ai' 给 Langfuse processor, root span
+ * attribute 永远到不了 Langfuse。
+ */
+const SANDBOX_TAGS_BAGGAGE_KEY = 'sandbox.tags';
 
 const tracer = trace.getTracer('http-server');
 
@@ -72,12 +88,20 @@ export function detectSandboxTags(req: Request): string[] | undefined {
 }
 
 /**
- * 把 sandbox tag 写到 root span 上。Langfuse OTel exporter 把
- * `ai.telemetry.metadata.tags` 升格为 trace 级 tags（同 AI SDK convention）。
+ * 把 sandbox tag 写到 root span 上 (诊断 / fullStack export 时有用) +
+ * 写入 OTel Baggage (跨进程传到 calo-agents LLM call site)。
+ *
+ * 返回带 baggage 的新 context, caller 应用 context.with(newCtx, () => next())
+ * 包裹下游执行, 让 W3C Baggage propagator 在出站 gRPC 时序列化。
  */
-function applySandboxTags(span: Span, req: Request): void {
+function applySandboxTags(span: Span, req: Request, ctx: Context): Context {
   const tags = detectSandboxTags(req);
-  if (tags) span.setAttribute('ai.telemetry.metadata.tags', tags);
+  if (!tags) return ctx;
+  span.setAttribute('ai.telemetry.metadata.tags', tags);
+  const baggage = propagation.createBaggage({
+    [SANDBOX_TAGS_BAGGAGE_KEY]: { value: JSON.stringify(tags) },
+  });
+  return propagation.setBaggage(ctx, baggage);
 }
 
 export function otelTraceMiddleware(req: Request, res: Response, next: NextFunction): void {
@@ -98,7 +122,12 @@ export function otelTraceMiddleware(req: Request, res: Response, next: NextFunct
     if (activeSpan) {
       const { traceId, spanId } = activeSpan.spanContext();
       writeTraceHeaders(res, traceId, spanId);
-      applySandboxTags(activeSpan, req);
+      const ctxWithBaggage = applySandboxTags(activeSpan, req, context.active());
+      // 若有 baggage 注入则 context.with 包裹 next, 保证下游 gRPC 出站时 propagator 看得到。
+      if (ctxWithBaggage !== context.active()) {
+        context.with(ctxWithBaggage, () => { next(); });
+        return;
+      }
     }
     next();
     return;
@@ -115,10 +144,10 @@ export function otelTraceMiddleware(req: Request, res: Response, next: NextFunct
 
   // 在 next() 之前写 header，保证 guard 异常路径也能拿到 —— filter 渲染错误响应时 header 已就位
   writeTraceHeaders(res, traceId, spanId);
-  applySandboxTags(span, req);
+  const finalCtx = applySandboxTags(span, req, spanCtx);
 
-  // 在 span context 下执行后续 middleware/handler
-  context.with(spanCtx, () => {
+  // 在 span context + sandbox baggage 下执行后续 middleware/handler
+  context.with(finalCtx, () => {
     res.on('finish', () => {
       span.setAttribute('http.status_code', res.statusCode);
       span.end();
