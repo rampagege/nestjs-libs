@@ -328,6 +328,19 @@ export interface LLMModelRegistry {
   'openrouter:gemini-3.1-flash-lite': ModelConfig<'openrouter'>;
   'openrouter:google/gemini-3.1-flash-lite': ModelConfig<'openrouter'>;
 
+  /**
+   * Gemini 3.5 Flash - GA
+   *
+   * 定价参考（2026.05）：Input $1.50/M, Output $9/M, Context 1M
+   *
+   * 默认 medium thinking effort，支持 minimal/low/medium/high。
+   * 价格相对 2.5 Flash 显著上行（input 5x、output 3.6x），定位非"性价比" Flash。
+   *
+   * @see https://openrouter.ai/google/gemini-3.5-flash
+   */
+  'openrouter:gemini-3.5-flash': ModelConfig<'openrouter'>;
+  'openrouter:google/gemini-3.5-flash': ModelConfig<'openrouter'>;
+
   // ==================== Google Direct ====================
   'google:gemini-2.5-flash': ModelConfig<'google'>;
   'google:gemini-2.5-pro': ModelConfig<'google'>;
@@ -578,6 +591,10 @@ const modelRegistry = new Map<string, ModelConfig>([
   // Gemini 3.1 Flash Lite
   ['openrouter:gemini-3.1-flash-lite', { provider: 'openrouter', modelId: 'google/gemini-3.1-flash-lite' }],
   ['openrouter:google/gemini-3.1-flash-lite', { provider: 'openrouter', modelId: 'google/gemini-3.1-flash-lite' }],
+
+  // Gemini 3.5 Flash
+  ['openrouter:gemini-3.5-flash', { provider: 'openrouter', modelId: 'google/gemini-3.5-flash' }],
+  ['openrouter:google/gemini-3.5-flash', { provider: 'openrouter', modelId: 'google/gemini-3.5-flash' }],
 
   // Google Direct 模型
   ['google:gemini-2.5-flash', { provider: 'google', modelId: 'gemini-2.5-flash' }],
