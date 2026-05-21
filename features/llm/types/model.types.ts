@@ -341,12 +341,193 @@ export interface LLMModelRegistry {
   'openrouter:gemini-3.5-flash': ModelConfig<'openrouter'>;
   'openrouter:google/gemini-3.5-flash': ModelConfig<'openrouter'>;
 
+  /**
+   * Gemini 3.1 Pro Preview
+   *
+   * 定价参考（2026.04）：Input $2/M, Output $12/M, Context 1M
+   *
+   * @see https://openrouter.ai/google/gemini-3.1-pro-preview
+   */
+  'openrouter:gemini-3.1-pro-preview': ModelConfig<'openrouter'>;
+  'openrouter:google/gemini-3.1-pro-preview': ModelConfig<'openrouter'>;
+
+  // ---- Anthropic Claude (4.5+) ----
+  /**
+   * Claude Haiku 4.5 - 低价快速
+   *
+   * 定价参考（2026.05）：Input $1/M, Output $5/M, Context 200K
+   *
+   * @see https://openrouter.ai/anthropic/claude-haiku-4.5
+   */
+  'openrouter:claude-haiku-4.5': ModelConfig<'openrouter'>;
+  'openrouter:anthropic/claude-haiku-4.5': ModelConfig<'openrouter'>;
+  /**
+   * Claude Sonnet 4.6 - 旗舰对话/工具调用
+   *
+   * 定价参考（2026.05）：Input $3/M, Output $15/M, Context 1M
+   *
+   * @see https://openrouter.ai/anthropic/claude-sonnet-4.6
+   */
+  'openrouter:claude-sonnet-4.6': ModelConfig<'openrouter'>;
+  'openrouter:anthropic/claude-sonnet-4.6': ModelConfig<'openrouter'>;
+  /**
+   * Claude Opus 4.6
+   *
+   * 定价参考（2026.05）：Input $5/M, Output $25/M, Context 1M
+   *
+   * @see https://openrouter.ai/anthropic/claude-opus-4.6
+   */
+  'openrouter:claude-opus-4.6': ModelConfig<'openrouter'>;
+  'openrouter:anthropic/claude-opus-4.6': ModelConfig<'openrouter'>;
+  /**
+   * Claude Opus 4.7 - 最新旗舰
+   *
+   * 定价参考（2026.05）：Input $5/M, Output $25/M, Context 1M
+   *
+   * @see https://openrouter.ai/anthropic/claude-opus-4.7
+   */
+  'openrouter:claude-opus-4.7': ModelConfig<'openrouter'>;
+  'openrouter:anthropic/claude-opus-4.7': ModelConfig<'openrouter'>;
+
+  // ---- OpenAI GPT-5 ----
+  /**
+   * GPT-5.1
+   *
+   * 定价参考（2026.05）：Input $1.25/M, Output $10/M, Context 400K
+   *
+   * @see https://openrouter.ai/openai/gpt-5.1
+   */
+  'openrouter:gpt-5.1': ModelConfig<'openrouter'>;
+  'openrouter:openai/gpt-5.1': ModelConfig<'openrouter'>;
+  /**
+   * GPT-5.2
+   *
+   * 定价参考（2026.05）：Input $1.75/M, Output $14/M, Context 400K
+   *
+   * @see https://openrouter.ai/openai/gpt-5.2
+   */
+  'openrouter:gpt-5.2': ModelConfig<'openrouter'>;
+  'openrouter:openai/gpt-5.2': ModelConfig<'openrouter'>;
+  /**
+   * GPT-5.4 - 主力
+   *
+   * 定价参考（2026.05）：Input $2.50/M, Output $15/M, Context 1.05M
+   *
+   * @see https://openrouter.ai/openai/gpt-5.4
+   */
+  'openrouter:gpt-5.4': ModelConfig<'openrouter'>;
+  'openrouter:openai/gpt-5.4': ModelConfig<'openrouter'>;
+  /**
+   * GPT-5.4 Mini
+   *
+   * 定价参考（2026.05）：Input $0.75/M, Output $4.50/M, Context 400K
+   *
+   * @see https://openrouter.ai/openai/gpt-5.4-mini
+   */
+  'openrouter:gpt-5.4-mini': ModelConfig<'openrouter'>;
+  'openrouter:openai/gpt-5.4-mini': ModelConfig<'openrouter'>;
+  /**
+   * GPT-5.4 Nano
+   *
+   * 定价参考（2026.05）：Input $0.20/M, Output $1.25/M, Context 400K
+   *
+   * @see https://openrouter.ai/openai/gpt-5.4-nano
+   */
+  'openrouter:gpt-5.4-nano': ModelConfig<'openrouter'>;
+  'openrouter:openai/gpt-5.4-nano': ModelConfig<'openrouter'>;
+  /**
+   * GPT-5.5 - 最新旗舰
+   *
+   * 定价参考（2026.05）：Input $5/M, Output $30/M, Context 1.05M
+   *
+   * @see https://openrouter.ai/openai/gpt-5.5
+   */
+  'openrouter:gpt-5.5': ModelConfig<'openrouter'>;
+  'openrouter:openai/gpt-5.5': ModelConfig<'openrouter'>;
+
+  // ---- xAI Grok (4.20+) ----
+  /**
+   * Grok 4.20 - 2M context
+   *
+   * 定价参考（2026.05）：Input $1.25/M, Output $2.50/M, Context 2M
+   *
+   * @see https://openrouter.ai/x-ai/grok-4.20
+   */
+  'openrouter:grok-4.20': ModelConfig<'openrouter'>;
+  'openrouter:x-ai/grok-4.20': ModelConfig<'openrouter'>;
+  /**
+   * Grok 4.3 - 最新旗舰
+   *
+   * 定价参考（2026.05）：Input $1.25/M, Output $2.50/M, Context 1M
+   *
+   * @see https://openrouter.ai/x-ai/grok-4.3
+   */
+  'openrouter:grok-4.3': ModelConfig<'openrouter'>;
+  'openrouter:x-ai/grok-4.3': ModelConfig<'openrouter'>;
+
+  // ---- DeepSeek / MoonshotAI Kimi / Qwen ----
+  /**
+   * DeepSeek V4 Flash - 高性价比
+   *
+   * 定价参考（2026.05）：Input $0.112/M, Output $0.224/M, Context 1M
+   *
+   * @see https://openrouter.ai/deepseek/deepseek-v4-flash
+   */
+  'openrouter:deepseek-v4-flash': ModelConfig<'openrouter'>;
+  'openrouter:deepseek/deepseek-v4-flash': ModelConfig<'openrouter'>;
+  /**
+   * DeepSeek V4 Pro - 旗舰推理
+   *
+   * 定价参考（2026.05）：Input $0.435/M, Output $0.87/M, Context 1M
+   *
+   * @see https://openrouter.ai/deepseek/deepseek-v4-pro
+   */
+  'openrouter:deepseek-v4-pro': ModelConfig<'openrouter'>;
+  'openrouter:deepseek/deepseek-v4-pro': ModelConfig<'openrouter'>;
+  /**
+   * Kimi K2.6 - MoonshotAI 新一代
+   *
+   * 定价参考（2026.05）：Input $0.73/M, Output $3.49/M, Context 262K
+   *
+   * @see https://openrouter.ai/moonshotai/kimi-k2.6
+   */
+  'openrouter:kimi-k2.6': ModelConfig<'openrouter'>;
+  'openrouter:moonshotai/kimi-k2.6': ModelConfig<'openrouter'>;
+  /**
+   * Kimi K2 Thinking - 推理特化（reasoning 强制开启）
+   *
+   * 定价参考（2026.05）：Input $0.60/M, Output $2.50/M, Context 262K
+   *
+   * @see https://openrouter.ai/moonshotai/kimi-k2-thinking
+   */
+  'openrouter:kimi-k2-thinking': ModelConfig<'openrouter'>;
+  'openrouter:moonshotai/kimi-k2-thinking': ModelConfig<'openrouter'>;
+  /**
+   * Qwen3.6 Flash - 高性价比
+   *
+   * 定价参考（2026.05）：Input $0.1875/M, Output $1.125/M, Context 1M
+   *
+   * @see https://openrouter.ai/qwen/qwen3.6-flash
+   */
+  'openrouter:qwen3.6-flash': ModelConfig<'openrouter'>;
+  'openrouter:qwen/qwen3.6-flash': ModelConfig<'openrouter'>;
+  /**
+   * Qwen3.7 Max - 最新旗舰
+   *
+   * 定价参考（2026.05）：Input $2.50/M, Output $7.50/M, Context 1M
+   *
+   * @see https://openrouter.ai/qwen/qwen3.7-max
+   */
+  'openrouter:qwen3.7-max': ModelConfig<'openrouter'>;
+  'openrouter:qwen/qwen3.7-max': ModelConfig<'openrouter'>;
+
   // ==================== Google Direct ====================
   'google:gemini-2.5-flash': ModelConfig<'google'>;
   'google:gemini-2.5-pro': ModelConfig<'google'>;
   'google:gemini-2.5-flash-lite': ModelConfig<'google'>;
   'google:gemini-3-flash-preview': ModelConfig<'google'>;
   'google:gemini-3.1-flash-lite': ModelConfig<'google'>;
+  'google:gemini-3.1-pro-preview': ModelConfig<'google'>;
 
   // ==================== Vertex AI (Express Mode) ====================
   'vertex:gemini-2.5-flash': ModelConfig<'vertex'>;
@@ -354,6 +535,7 @@ export interface LLMModelRegistry {
   'vertex:gemini-2.5-flash-lite': ModelConfig<'vertex'>;
   'vertex:gemini-3-flash-preview': ModelConfig<'vertex'>;
   'vertex:gemini-3.1-flash-lite': ModelConfig<'vertex'>;
+  'vertex:gemini-3.1-pro-preview': ModelConfig<'vertex'>;
 
   // ==================== Vertex AI (project/global mode) ====================
   'vertex-global:gemini-2.5-flash': ModelConfig<'vertex-global'>;
@@ -361,6 +543,7 @@ export interface LLMModelRegistry {
   'vertex-global:gemini-2.5-flash-lite': ModelConfig<'vertex-global'>;
   'vertex-global:gemini-3-flash-preview': ModelConfig<'vertex-global'>;
   'vertex-global:gemini-3.1-flash-lite': ModelConfig<'vertex-global'>;
+  'vertex-global:gemini-3.1-pro-preview': ModelConfig<'vertex-global'>;
 }
 
 /**
@@ -596,12 +779,81 @@ const modelRegistry = new Map<string, ModelConfig>([
   ['openrouter:gemini-3.5-flash', { provider: 'openrouter', modelId: 'google/gemini-3.5-flash' }],
   ['openrouter:google/gemini-3.5-flash', { provider: 'openrouter', modelId: 'google/gemini-3.5-flash' }],
 
+  // Gemini 3.1 Pro Preview
+  ['openrouter:gemini-3.1-pro-preview', { provider: 'openrouter', modelId: 'google/gemini-3.1-pro-preview' }],
+  ['openrouter:google/gemini-3.1-pro-preview', { provider: 'openrouter', modelId: 'google/gemini-3.1-pro-preview' }],
+
+  // Claude Haiku 4.5
+  ['openrouter:claude-haiku-4.5', { provider: 'openrouter', modelId: 'anthropic/claude-haiku-4.5' }],
+  ['openrouter:anthropic/claude-haiku-4.5', { provider: 'openrouter', modelId: 'anthropic/claude-haiku-4.5' }],
+  // Claude Sonnet 4.6
+  ['openrouter:claude-sonnet-4.6', { provider: 'openrouter', modelId: 'anthropic/claude-sonnet-4.6' }],
+  ['openrouter:anthropic/claude-sonnet-4.6', { provider: 'openrouter', modelId: 'anthropic/claude-sonnet-4.6' }],
+  // Claude Opus 4.6
+  ['openrouter:claude-opus-4.6', { provider: 'openrouter', modelId: 'anthropic/claude-opus-4.6' }],
+  ['openrouter:anthropic/claude-opus-4.6', { provider: 'openrouter', modelId: 'anthropic/claude-opus-4.6' }],
+  // Claude Opus 4.7
+  ['openrouter:claude-opus-4.7', { provider: 'openrouter', modelId: 'anthropic/claude-opus-4.7' }],
+  ['openrouter:anthropic/claude-opus-4.7', { provider: 'openrouter', modelId: 'anthropic/claude-opus-4.7' }],
+
+  // GPT-5.1
+  ['openrouter:gpt-5.1', { provider: 'openrouter', modelId: 'openai/gpt-5.1' }],
+  ['openrouter:openai/gpt-5.1', { provider: 'openrouter', modelId: 'openai/gpt-5.1' }],
+  // GPT-5.2
+  ['openrouter:gpt-5.2', { provider: 'openrouter', modelId: 'openai/gpt-5.2' }],
+  ['openrouter:openai/gpt-5.2', { provider: 'openrouter', modelId: 'openai/gpt-5.2' }],
+  // GPT-5.4
+  ['openrouter:gpt-5.4', { provider: 'openrouter', modelId: 'openai/gpt-5.4' }],
+  ['openrouter:openai/gpt-5.4', { provider: 'openrouter', modelId: 'openai/gpt-5.4' }],
+  // GPT-5.4 Mini
+  ['openrouter:gpt-5.4-mini', { provider: 'openrouter', modelId: 'openai/gpt-5.4-mini' }],
+  ['openrouter:openai/gpt-5.4-mini', { provider: 'openrouter', modelId: 'openai/gpt-5.4-mini' }],
+  // GPT-5.4 Nano
+  ['openrouter:gpt-5.4-nano', { provider: 'openrouter', modelId: 'openai/gpt-5.4-nano' }],
+  ['openrouter:openai/gpt-5.4-nano', { provider: 'openrouter', modelId: 'openai/gpt-5.4-nano' }],
+  // GPT-5.5
+  ['openrouter:gpt-5.5', { provider: 'openrouter', modelId: 'openai/gpt-5.5' }],
+  ['openrouter:openai/gpt-5.5', { provider: 'openrouter', modelId: 'openai/gpt-5.5' }],
+
+  // Grok 4.20
+  ['openrouter:grok-4.20', { provider: 'openrouter', modelId: 'x-ai/grok-4.20' }],
+  ['openrouter:x-ai/grok-4.20', { provider: 'openrouter', modelId: 'x-ai/grok-4.20' }],
+  // Grok 4.3
+  ['openrouter:grok-4.3', { provider: 'openrouter', modelId: 'x-ai/grok-4.3' }],
+  ['openrouter:x-ai/grok-4.3', { provider: 'openrouter', modelId: 'x-ai/grok-4.3' }],
+
+  // DeepSeek V4 Flash
+  ['openrouter:deepseek-v4-flash', { provider: 'openrouter', modelId: 'deepseek/deepseek-v4-flash' }],
+  ['openrouter:deepseek/deepseek-v4-flash', { provider: 'openrouter', modelId: 'deepseek/deepseek-v4-flash' }],
+  // DeepSeek V4 Pro
+  ['openrouter:deepseek-v4-pro', { provider: 'openrouter', modelId: 'deepseek/deepseek-v4-pro' }],
+  ['openrouter:deepseek/deepseek-v4-pro', { provider: 'openrouter', modelId: 'deepseek/deepseek-v4-pro' }],
+  // Kimi K2.6
+  ['openrouter:kimi-k2.6', { provider: 'openrouter', modelId: 'moonshotai/kimi-k2.6' }],
+  ['openrouter:moonshotai/kimi-k2.6', { provider: 'openrouter', modelId: 'moonshotai/kimi-k2.6' }],
+  // Kimi K2 Thinking (reasoningRequired: 推理特化模型)
+  [
+    'openrouter:kimi-k2-thinking',
+    { provider: 'openrouter', modelId: 'moonshotai/kimi-k2-thinking', reasoningRequired: true },
+  ],
+  [
+    'openrouter:moonshotai/kimi-k2-thinking',
+    { provider: 'openrouter', modelId: 'moonshotai/kimi-k2-thinking', reasoningRequired: true },
+  ],
+  // Qwen3.6 Flash
+  ['openrouter:qwen3.6-flash', { provider: 'openrouter', modelId: 'qwen/qwen3.6-flash' }],
+  ['openrouter:qwen/qwen3.6-flash', { provider: 'openrouter', modelId: 'qwen/qwen3.6-flash' }],
+  // Qwen3.7 Max
+  ['openrouter:qwen3.7-max', { provider: 'openrouter', modelId: 'qwen/qwen3.7-max' }],
+  ['openrouter:qwen/qwen3.7-max', { provider: 'openrouter', modelId: 'qwen/qwen3.7-max' }],
+
   // Google Direct 模型
   ['google:gemini-2.5-flash', { provider: 'google', modelId: 'gemini-2.5-flash' }],
   ['google:gemini-2.5-pro', { provider: 'google', modelId: 'gemini-2.5-pro' }],
   ['google:gemini-2.5-flash-lite', { provider: 'google', modelId: 'gemini-2.5-flash-lite' }],
   ['google:gemini-3-flash-preview', { provider: 'google', modelId: 'gemini-3-flash-preview' }],
   ['google:gemini-3.1-flash-lite', { provider: 'google', modelId: 'gemini-3.1-flash-lite' }],
+  ['google:gemini-3.1-pro-preview', { provider: 'google', modelId: 'gemini-3.1-pro-preview' }],
 
   // Vertex AI 模型 (Express Mode)
   // 这些 key 保持既有 API-key Express Mode 语义；需要 Google 官方 project/global
@@ -633,6 +885,14 @@ const modelRegistry = new Map<string, ModelConfig>([
       supportedTiers: ['standard', 'flex', 'priority'],
     },
   ],
+  [
+    'vertex:gemini-3.1-pro-preview',
+    {
+      provider: 'vertex',
+      modelId: 'gemini-3.1-pro-preview',
+      supportedTiers: ['standard', 'flex', 'priority'],
+    },
+  ],
 
   // Vertex AI 模型 (project/global mode)
   // Google Priority/Flex PayGo 文档要求使用 /projects/{project}/locations/global/... 路径。
@@ -657,6 +917,14 @@ const modelRegistry = new Map<string, ModelConfig>([
     {
       provider: 'vertex-global',
       modelId: 'gemini-3.1-flash-lite',
+      supportedTiers: ['standard', 'flex', 'priority'],
+    },
+  ],
+  [
+    'vertex-global:gemini-3.1-pro-preview',
+    {
+      provider: 'vertex-global',
+      modelId: 'gemini-3.1-pro-preview',
       supportedTiers: ['standard', 'flex', 'priority'],
     },
   ],
