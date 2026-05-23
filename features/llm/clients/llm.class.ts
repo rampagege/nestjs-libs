@@ -172,6 +172,21 @@ interface BaseParams {
   maxRetries?: number;
   /** Telemetry 配置 */
   telemetry?: TelemetrySettings;
+  /**
+   * 工具集 (Vercel AI SDK ToolSet). 仅 streamText 路径生效 —
+   * generateText/generateObject 走单步路径不消费.
+   * 历史 bug 2026-05-23: 此字段未透传, calo-agents stage-2 useSkills 路径
+   * 即便 spread `{tools, maxSteps}` 进 params, 在 streamText destructure 时
+   * 丢弃, LLM 永远看不到 tools → create_event/update_event 等 skill 无法被
+   * 调用. 修复: 加这俩字段 + streamText 透传.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tools?: Record<string, any>;
+  /** 多步工具调用上限 (Vercel SDK maxSteps). 默认 1 (单步, 不调 tool). */
+  maxSteps?: number;
+  /** Vercel SDK toolChoice — 'auto' (默认) / 'required' / 'none' / { type: 'tool', toolName } */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  toolChoice?: any;
 }
 
 /** generateObject 参数 */
@@ -1214,6 +1229,9 @@ export class LLM {
       timeout: callerTimeout,
       maxRetries: callerMaxRetries,
       telemetry = DEFAULT_TELEMETRY,
+      tools,
+      maxSteps,
+      toolChoice,
     } = params;
 
     const spec = resolveSpec(modelSpec, callerThinking, callerMaxRetries, callerTimeout);
@@ -1243,6 +1261,11 @@ export class LLM {
       maxRetries: spec.maxRetries,
       abortSignal: signal,
       experimental_telemetry: mergeBaggageTags(telemetry),
+      // 2026-05-23 fix — 之前这俩字段从 BaseParams 解构时直接丢弃,
+      // 导致 calo-agents stage-2 skill 路径的 tools 从未真到达 LLM.
+      ...(tools ? { tools } : {}),
+      ...(maxSteps !== undefined ? { maxSteps } : {}),
+      ...(toolChoice !== undefined ? { toolChoice } : {}),
       onError: ({ error }) => {
         cleanup();
         LLM.logError(id, 'streamText', modelKey, error);
