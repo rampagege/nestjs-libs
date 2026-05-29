@@ -132,9 +132,16 @@ export async function bootstrap(
 
   // --- 创建应用 ---
   await configureLogging(logLevel);
-  const app = await NestFactory.create<NestExpressApplication>(wrapWithBootModule(AppModule), {
-    logger: new LogtapeNestLogger(),
-  });
+  // NestExpressApplication 在 @nestjs/platform-express 新版本里加了 generic <Server>
+  // 跟基类 INestApplication<any> 约束不兼容. 用 unknown 中转 + cast 让 NestFactory
+  // 不再尝试推 NestExpressApplication 泛型; 同时下游 AnyExceptionFilter / onInit /
+  // runApp 收到合适形态.
+  const app = (await (NestFactory.create as unknown as (...args: unknown[]) => Promise<NestExpressApplication>)(
+    wrapWithBootModule(AppModule),
+    {
+      logger: new LogtapeNestLogger(),
+    },
+  ));
   if (isApi) {
     app.set('query parser', 'extended');
   }
@@ -153,8 +160,10 @@ export async function bootstrap(
     app.useGlobalFilters(new GrpcExceptionFilter(provider));
     app.useGlobalGuards(new GrpcServiceTokenGuard());
   } else {
-    // api / scheduler：AnyExceptionFilter
-    app.useGlobalFilters(new AnyExceptionFilter(app));
+    // api / scheduler：AnyExceptionFilter — cast NestExpressApplication 到
+    // INestApplication 兼容 AnyExceptionFilter 接口 (nest platform-express 版本
+    // 加 generic 后两形态结构不兼容).
+    app.useGlobalFilters(new AnyExceptionFilter(app as INestApplication));
     if (isApi) {
       bootstrapLogger.info`[Config] AnyExceptionFilter initialized with app reference for lazy i18n support`;
     }
@@ -338,7 +347,7 @@ export async function bootstrap(
   }
 
   // --- onInit 回调 ---
-  if (onInit) await onInit(app);
+  if (onInit) await onInit(app as INestApplication);
 
   // --- gRPC 微服务配置 ---
   let grpcPort: number | undefined;
@@ -376,7 +385,7 @@ export async function bootstrap(
   // --- listen ---
   const port = isGrpc ? (options?.httpPort ?? SysEnv.PORT) : SysEnv.PORT;
 
-  await runApp(app)
+  await runApp(app as INestApplication)
     .listen(port)
     .then(() => {
       printBanner(mode, { app, port, grpcPort, options, startedAt: now });
