@@ -8,8 +8,10 @@
  *
  * 1. 环境变量配置（Doppler 注入）：
  *    GRPC_SERVICE_TOKEN=<shared-secret>
+ *    prd/stg 必设，否则 calo-server 启动时 assertStartupSecrets() 直接拒绝
+ *    （fail-closed，绝不静默放行）；local/dev 可空，guard 进入 no-op 并打 warn。
  *
- * 2. 服务端 — 全局注册（推荐，所有 gRPC 端点自动保护）：
+ * 2. 服务端（callee）— 全局注册（calo-server 已在 app.module.ts 这样接）：
  *    ```
  *    @Module({
  *      providers: [{ provide: APP_GUARD, useClass: GrpcServiceTokenGuard }],
@@ -24,20 +26,23 @@
  *    export class MyGrpcController { ... }
  *    ```
  *
- * 4. 客户端（contract SDK 自动注入，无需手动设置）：
- *    token 由 contract/clients/tracing.ts 的 serviceTokenMiddleware 自动注入。
+ * 4. 客户端（caller）— 出站注入：
+ *    调用方（calo-contract / calo-agents）需在统一 gRPC client 工厂注入 metadata
+ *    `x-service-token` = GRPC_SERVICE_TOKEN（与 createTracedClient 同层 middleware）。
+ *    该注入不在本仓库实现 —— calo-server 自身只作为 callee 被 agents 调用。
  *
  * 安全模型：
- * - 自动跳过非 RPC 上下文（HTTP 健康检查等不受影响）
- * - 未配置 GRPC_SERVICE_TOKEN 时，跳过验证（本地开发兼容）
+ * - 自动跳过非 RPC 上下文（HTTP / GraphQL 健康检查等不受影响）
+ * - 未配置 GRPC_SERVICE_TOKEN 时跳过验证（仅 local/dev；prd/stg 已被启动校验挡住）
  * - 配置后，缺少或错误的 token 返回 UNAUTHENTICATED
  */
 
 import { Injectable } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
 
-import { status } from '@grpc/grpc-js';
 import { getAppLogger } from '@app/utils/app-logger';
+
+import { status } from '@grpc/grpc-js';
 
 import type { Metadata } from '@grpc/grpc-js';
 import type { CanActivate, ExecutionContext } from '@nestjs/common';
