@@ -185,6 +185,42 @@ export function getGoogleProvider() {
 // ============================================================================
 
 /**
+ * 剥离 functionCall.id / functionResponse.id — Vertex (aiplatform.googleapis.com v1)
+ * 不接受这两个字段, 会 400 `Unknown name "id" at 'contents[N].parts[0].function_call'`.
+ *
+ * 背景 (2026-06-05): @ai-sdk/google ≥3.0.7x 在多步 tool calling 的 step-2 请求里
+ * 无条件给 functionCall/functionResponse 带 id (Gemini API generativelanguage 端点
+ * 支持, Vertex v1 不支持, 上游未做端点区分; 3.0.80 仍未修)。maxSteps 修复
+ * (stopWhen 映射) 让 step-2 真正发出后才暴露此 bug — 之前永远单步, 撞不到。
+ * 症状: 工具执行成功但流静默结束 (onError 吞 400), 模型永远说不出第二句话。
+ */
+export function stripVertexFunctionCallIds(body: string): string {
+  if (!body.includes('"functionCall"') && !body.includes('"functionResponse"')) return body;
+  try {
+    const json = JSON.parse(body) as { contents?: Array<{ parts?: Array<Record<string, unknown>> }> };
+    for (const content of json.contents ?? []) {
+      for (const part of content.parts ?? []) {
+        const fc = part.functionCall as Record<string, unknown> | undefined;
+        if (fc && typeof fc === 'object') delete fc.id;
+        const fr = part.functionResponse as Record<string, unknown> | undefined;
+        if (fr && typeof fr === 'object') delete fr.id;
+      }
+    }
+    return JSON.stringify(json);
+  } catch {
+    return body; // 非 JSON body 原样放行
+  }
+}
+
+// 类型按 ApiFetcher.fetch 对齐 (bun 的 typeof fetch 要求 preconnect 静态属性, 函数字面量给不了)
+const vertexSanitizingFetch = ((input: Parameters<typeof ApiFetcher.fetch>[0], init?: RequestInit) => {
+  if (init?.body && typeof init.body === 'string') {
+    init = { ...init, body: stripVertexFunctionCallIds(init.body) };
+  }
+  return ApiFetcher.fetch(input, init);
+}) as typeof ApiFetcher.fetch;
+
+/**
  * 获取 Vertex AI 客户端单例 (Express Mode)
  *
  * 自动使用：
@@ -200,7 +236,7 @@ function getVertex() {
     clientLogger.info`[vertex:init] mode=express, auth=api-key, baseURL=default-express, project=none, location=none`;
     _vertex = createVertex({
       apiKey,
-      fetch: ApiFetcher.fetch,
+      fetch: vertexSanitizingFetch, // 剥 functionCall.id (Vertex v1 不认, 见上)
     });
   }
   return _vertex;
@@ -265,7 +301,7 @@ function getVertexGlobal() {
       project,
       location,
       baseURL,
-      fetch: ApiFetcher.fetch,
+      fetch: vertexSanitizingFetch, // 剥 functionCall.id (Vertex v1 不认, 见上)
     });
   }
   return _vertexGlobal;
