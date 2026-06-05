@@ -365,6 +365,14 @@ export interface LLMModelRegistry {
   'vertex:gemini-2.5-flash-lite': ModelConfig<'vertex'>;
   'vertex:gemini-3-flash-preview': ModelConfig<'vertex'>;
   'vertex:gemini-3.1-flash-lite': ModelConfig<'vertex'>;
+  /**
+   * Gemini 3.5 Flash 直连 Vertex — 与 openrouter 版关键差异: **thinking 可关**!
+   * 2026-06-05 实测 (aiplatform v1 + thinkingConfig): 默认 thoughts=182tok;
+   * thinkingBudget:0 → 0; thinkingLevel:minimal → 0。"Reasoning is mandatory"
+   * 是 OpenRouter 中转层限制, 非模型限制。noThinking 路径 (disableThinkingOptions
+   * → thinkingBudget:0) 即插即用。定价 $1.50/$9。
+   */
+  'vertex:gemini-3.5-flash': ModelConfig<'vertex'>;
 
   // ==================== Vertex AI (project/global mode) ====================
   'vertex-global:gemini-2.5-flash': ModelConfig<'vertex-global'>;
@@ -372,6 +380,7 @@ export interface LLMModelRegistry {
   'vertex-global:gemini-2.5-flash-lite': ModelConfig<'vertex-global'>;
   'vertex-global:gemini-3-flash-preview': ModelConfig<'vertex-global'>;
   'vertex-global:gemini-3.1-flash-lite': ModelConfig<'vertex-global'>;
+  'vertex-global:gemini-3.5-flash': ModelConfig<'vertex-global'>;
 }
 
 /**
@@ -655,6 +664,8 @@ const modelRegistry = new Map<string, ModelConfig>([
       supportedTiers: ['standard', 'flex', 'priority'],
     },
   ],
+  // Gemini 3.5 Flash 直连 (thinking 可关, 见 interface 注释; tiers 未查证 → 默认 standard)
+  ['vertex:gemini-3.5-flash', { provider: 'vertex', modelId: 'gemini-3.5-flash' }],
 
   // Vertex AI 模型 (project/global mode)
   // Google Priority/Flex PayGo 文档要求使用 /projects/{project}/locations/global/... 路径。
@@ -682,6 +693,7 @@ const modelRegistry = new Map<string, ModelConfig>([
       supportedTiers: ['standard', 'flex', 'priority'],
     },
   ],
+  ['vertex-global:gemini-3.5-flash', { provider: 'vertex-global', modelId: 'gemini-3.5-flash' }],
 ]);
 
 // ==================== 注册函数 ====================
