@@ -177,6 +177,17 @@ export interface LLMModelRegistry {
   'openrouter:claude-sonnet-4.5': ModelConfig<'openrouter'>;
   'openrouter:anthropic/claude-sonnet-4.5': ModelConfig<'openrouter'>;
   /**
+   * Claude Sonnet 4.6 - 主聊天候选（分层模型策略：主循环 Sonnet 级）
+   *
+   * 定价参考（2026.06）：Input $3/M, Output $15/M, Context 1M
+   *
+   * 支持 adaptive thinking；OpenRouter 透传 Anthropic prompt caching。
+   *
+   * @see https://openrouter.ai/anthropic/claude-sonnet-4.6
+   */
+  'openrouter:claude-sonnet-4.6': ModelConfig<'openrouter'>;
+  'openrouter:anthropic/claude-sonnet-4.6': ModelConfig<'openrouter'>;
+  /**
    * Claude Opus 4.1
    *
    * 定价参考（2026.02）：Input $15/M, Output $75/M, Context 200K
@@ -552,6 +563,9 @@ const modelRegistry = new Map<string, ModelConfig>([
   // Claude Sonnet 4.5
   ['openrouter:claude-sonnet-4.5', { provider: 'openrouter', modelId: 'anthropic/claude-sonnet-4.5' }],
   ['openrouter:anthropic/claude-sonnet-4.5', { provider: 'openrouter', modelId: 'anthropic/claude-sonnet-4.5' }],
+  // Claude Sonnet 4.6
+  ['openrouter:claude-sonnet-4.6', { provider: 'openrouter', modelId: 'anthropic/claude-sonnet-4.6' }],
+  ['openrouter:anthropic/claude-sonnet-4.6', { provider: 'openrouter', modelId: 'anthropic/claude-sonnet-4.6' }],
   // Claude Opus 4.1
   ['openrouter:claude-4.1-opus', { provider: 'openrouter', modelId: 'anthropic/claude-opus-4.1' }],
   ['openrouter:anthropic/claude-opus-4.1', { provider: 'openrouter', modelId: 'anthropic/claude-opus-4.1' }],

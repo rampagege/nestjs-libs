@@ -55,6 +55,8 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
   'anthropic/claude-3.5-haiku': { input: 0.8, output: 4.0 },
   'anthropic/claude-sonnet-4': { input: 3.0, output: 15.0 },
   'anthropic/claude-4-sonnet': { input: 3.0, output: 15.0 }, // alias
+  'anthropic/claude-sonnet-4.5': { input: 3.0, output: 15.0 },
+  'anthropic/claude-sonnet-4.6': { input: 3.0, output: 15.0 },
   'anthropic/claude-opus-4.1': { input: 15.0, output: 75.0 },
   'anthropic/claude-4-opus': { input: 5.0, output: 25.0 },
 
