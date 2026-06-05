@@ -49,6 +49,7 @@ import {
   generateText,
   NoObjectGeneratedError,
   Output,
+  stepCountIs,
   streamText,
   tool,
   jsonSchema as wrapJsonSchema,
@@ -182,7 +183,14 @@ interface BaseParams {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tools?: Record<string, any>;
-  /** 多步工具调用上限 (Vercel SDK maxSteps). 默认 1 (单步, 不调 tool). */
+  /**
+   * 多步工具调用上限. 默认 1 (单步: 工具执行但结果不回传模型).
+   *
+   * 历史 bug 2026-06-05: 之前直接把 `maxSteps` spread 给 AI SDK v6 streamText —
+   * v6 已无此参数 (v5 起改为 `stopWhen: stepCountIs(n)`), 被静默忽略 → 实际永远
+   * 单步. 症状: 模型先 query_schedule 后流就结束、调完 create_event 不出文字
+   * (card-reply 兜底因此而生). 修复: streamText 内部映射为 stopWhen.
+   */
   maxSteps?: number;
   /** Vercel SDK toolChoice — 'auto' (默认) / 'required' / 'none' / { type: 'tool', toolName } */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1264,7 +1272,9 @@ export class LLM {
       // 2026-05-23 fix — 之前这俩字段从 BaseParams 解构时直接丢弃,
       // 导致 calo-agents stage-2 skill 路径的 tools 从未真到达 LLM.
       ...(tools ? { tools } : {}),
-      ...(maxSteps !== undefined ? { maxSteps } : {}),
+      // v6: maxSteps 参数已移除, 等价物是 stopWhen: stepCountIs(n).
+      // 直接 spread maxSteps 会被静默忽略 → 永远单步 (2026-06-05 修).
+      ...(maxSteps !== undefined ? { stopWhen: stepCountIs(maxSteps) } : {}),
       ...(toolChoice !== undefined ? { toolChoice } : {}),
       onError: ({ error }) => {
         cleanup();
