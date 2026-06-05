@@ -81,6 +81,7 @@ const MODEL_PRICING: Record<string, ModelPricing> = {
 
   // OpenAI
   'openai/gpt-4o-mini': { input: 0.15, output: 0.6 },
+  'openai/gpt-5.5': { input: 5.0, output: 30.0 },
   'openai/gpt-5.2': { input: 1.75, output: 14.0 },
   'openai/gpt-5.2-pro': { input: 21.0, output: 168.0 },
 };
@@ -147,6 +148,8 @@ function calculateCostFromKey(
         //   modelId = `z-ai/${modelName}`;
       } else if (modelName.startsWith('minimax')) {
         modelId = `minimax/${modelName}`;
+      } else if (modelName.startsWith('gpt')) {
+        modelId = `openai/${modelName}`;
       } else {
         modelId = modelName; // 假设已经包含 provider 前缀
       }

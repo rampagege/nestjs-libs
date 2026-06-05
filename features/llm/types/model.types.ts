@@ -215,6 +215,15 @@ export interface LLMModelRegistry {
   'openrouter:gpt-4o-mini': ModelConfig<'openrouter'>;
   'openrouter:openai/gpt-4o-mini': ModelConfig<'openrouter'>;
   /**
+   * GPT-5.5 — routing eval 对比用 (2026-06-05)
+   *
+   * 定价参考（2026.06）：Input $5/M, Output $30/M, Context 1M
+   *
+   * @see https://openrouter.ai/openai/gpt-5.5
+   */
+  'openrouter:gpt-5.5': ModelConfig<'openrouter'>;
+  'openrouter:openai/gpt-5.5': ModelConfig<'openrouter'>;
+  /**
    * Grok 3 Mini - thinking
    *
    * 定价参考（2026.02）：Input $0.30/M, Output $0.50/M, Context 131K
@@ -584,6 +593,9 @@ const modelRegistry = new Map<string, ModelConfig>([
   // GPT-4o Mini
   ['openrouter:gpt-4o-mini', { provider: 'openrouter', modelId: 'openai/gpt-4o-mini' }],
   ['openrouter:openai/gpt-4o-mini', { provider: 'openrouter', modelId: 'openai/gpt-4o-mini' }],
+  // GPT-5.5
+  ['openrouter:gpt-5.5', { provider: 'openrouter', modelId: 'openai/gpt-5.5' }],
+  ['openrouter:openai/gpt-5.5', { provider: 'openrouter', modelId: 'openai/gpt-5.5' }],
   // Grok 3 Mini
   ['openrouter:grok-3-mini', { provider: 'openrouter', modelId: 'x-ai/grok-3-mini' }],
   ['openrouter:x-ai/grok-3-mini', { provider: 'openrouter', modelId: 'x-ai/grok-3-mini' }],
