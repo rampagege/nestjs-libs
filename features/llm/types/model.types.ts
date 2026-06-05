@@ -606,9 +606,17 @@ const modelRegistry = new Map<string, ModelConfig>([
   ['openrouter:gemini-3.1-flash-lite', { provider: 'openrouter', modelId: 'google/gemini-3.1-flash-lite' }],
   ['openrouter:google/gemini-3.1-flash-lite', { provider: 'openrouter', modelId: 'google/gemini-3.1-flash-lite' }],
 
-  // Gemini 3.5 Flash
-  ['openrouter:gemini-3.5-flash', { provider: 'openrouter', modelId: 'google/gemini-3.5-flash' }],
-  ['openrouter:google/gemini-3.5-flash', { provider: 'openrouter', modelId: 'google/gemini-3.5-flash' }],
+  // Gemini 3.5 Flash (reasoningRequired: OpenRouter 400 "Reasoning is mandatory and cannot
+  // be disabled" — 2026-06-04 stg 主聊天全挂事故根因: 没标此 flag → noThinking 路径主动发
+  // disable-thinking 被拒. 标上后 noThinking 不发 disable; 用时建议 ?reason=low 控 effort.)
+  [
+    'openrouter:gemini-3.5-flash',
+    { provider: 'openrouter', modelId: 'google/gemini-3.5-flash', reasoningRequired: true },
+  ],
+  [
+    'openrouter:google/gemini-3.5-flash',
+    { provider: 'openrouter', modelId: 'google/gemini-3.5-flash', reasoningRequired: true },
+  ],
 
   // Google Direct 模型
   ['google:gemini-2.5-flash', { provider: 'google', modelId: 'gemini-2.5-flash' }],
