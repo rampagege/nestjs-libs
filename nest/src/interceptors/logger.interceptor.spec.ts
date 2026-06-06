@@ -1,6 +1,47 @@
-import { isOopsBusinessException } from './logger.interceptor';
+import { isOopsBusinessException, redactHttpHeaders } from './logger.interceptor';
 
 import { describe, expect, it } from 'bun:test';
+
+describe('redactHttpHeaders', () => {
+  it('fully redacts authorization and cookie (no partial leak)', () => {
+    const out = redactHttpHeaders({
+      authorization: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig',
+      cookie: 'sandbox_session=secretvalue; other=1',
+    });
+    expect(out.authorization).toBe('[REDACTED]');
+    expect(out.cookie).toBe('[REDACTED]');
+  });
+
+  it('redacts set-cookie / proxy-authorization / x-api-key / x-auth-token', () => {
+    const out = redactHttpHeaders({
+      'set-cookie': 'a=b',
+      'proxy-authorization': 'Basic xxx',
+      'x-api-key': 'sk-123',
+      'x-auth-token': 'tok',
+    });
+    expect(out['set-cookie']).toBe('[REDACTED]');
+    expect(out['proxy-authorization']).toBe('[REDACTED]');
+    expect(out['x-api-key']).toBe('[REDACTED]');
+    expect(out['x-auth-token']).toBe('[REDACTED]');
+  });
+
+  it('is case-insensitive on header names', () => {
+    const out = redactHttpHeaders({ Authorization: 'Bearer x', Cookie: 'c=1' });
+    expect(out.Authorization).toBe('[REDACTED]');
+    expect(out.Cookie).toBe('[REDACTED]');
+  });
+
+  it('preserves non-sensitive headers verbatim', () => {
+    const out = redactHttpHeaders({ host: 'api.example.com', 'user-agent': 'Mozilla/5.0', 'content-length': '57486' });
+    expect(out.host).toBe('api.example.com');
+    expect(out['user-agent']).toBe('Mozilla/5.0');
+    expect(out['content-length']).toBe('57486');
+  });
+
+  it('handles undefined → empty object', () => {
+    expect(redactHttpHeaders(undefined)).toEqual({});
+  });
+});
 
 describe('isOopsBusinessException', () => {
   it('returns true for IOopsException with httpStatus < 500 (BusinessException)', () => {

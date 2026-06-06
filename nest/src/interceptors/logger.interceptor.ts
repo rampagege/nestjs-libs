@@ -27,7 +27,7 @@ export function isOopsBusinessException(error: unknown): boolean {
     error !== null &&
     typeof error === 'object' &&
     'httpStatus' in error &&
-    typeof (error).httpStatus === 'number' &&
+    typeof error.httpStatus === 'number' &&
     (error as { httpStatus: number }).httpStatus < 500
   );
 }
@@ -122,10 +122,8 @@ export class LoggerInterceptor implements NestInterceptor {
       body,
       query: req.query,
       params: req.params,
-      headers: {
-        ...req.headers,
-        cookie: req.headers.cookie ? `${req.headers.cookie.slice(0, 100)}...` : req.headers.cookie,
-      },
+      // 日志脱敏: authorization / cookie 等敏感 header 整条 [REDACTED] (之前裸 spread 把完整 JWT+cookie 打进日志)。
+      headers: redactHttpHeaders(req.headers),
       /*
             raw: req.raw,
             id: req.id,
@@ -300,20 +298,25 @@ export class LoggerInterceptor implements NestInterceptor {
   }
 }
 
-const SENSITIVE_WS_HEADER_PATTERN = /authorization|token|cookie|secret/i;
-
 function maskWsHeaders(headers?: Record<string, unknown>) {
+  // WS 路径同样全抹敏感 header（之前仅截前 12 字，仍泄露前缀）。复用 HTTP 脱敏（函数声明已 hoist）。
+  return redactHttpHeaders(headers);
+}
+
+const SENSITIVE_HTTP_HEADER_PATTERN = /authorization|cookie|token|secret|api[-_]?key|x-auth/i;
+
+/**
+ * 日志脱敏 — 含敏感关键字的 HTTP header 整条替换为 [REDACTED]（不截断，避免泄露前缀）。
+ * 命中: authorization / proxy-authorization / cookie / set-cookie / x-api-key / x-auth-token 等。
+ * 之前 HTTP 请求日志裸 spread req.headers，把完整 Bearer JWT + cookie 明文落盘（泄露面）。
+ */
+export function redactHttpHeaders(headers: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!headers) {
     return {};
   }
-
-  const masked: Record<string, unknown> = {};
+  const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(headers)) {
-    if (SENSITIVE_WS_HEADER_PATTERN.test(key) && typeof value === 'string') {
-      masked[key] = value.length > 12 ? `${value.slice(0, 12)}...` : value;
-    } else {
-      masked[key] = value;
-    }
+    out[key] = SENSITIVE_HTTP_HEADER_PATTERN.test(key) ? '[REDACTED]' : value;
   }
-  return masked;
+  return out;
 }
