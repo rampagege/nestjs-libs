@@ -1,6 +1,34 @@
-import { isOopsBusinessException, redactHttpHeaders } from './logger.interceptor';
+import { isOopsBusinessException, redactHttpHeaders, truncateForLog } from './logger.interceptor';
 
 import { describe, expect, it } from 'bun:test';
+
+describe('truncateForLog', () => {
+  it('truncates a long string NESTED inside an object (PII/noise must not dump in full)', () => {
+    const careContext = '## SAFETY: Untrusted Data Marker\n' + 'x'.repeat(5000) + 'home address: 123 Secret St';
+    const out = truncateForLog({ environment: { enhancements: { careContext } } }) as {
+      environment: { enhancements: { careContext: string } };
+    };
+    const got = out.environment.enhancements.careContext;
+    expect(got.endsWith('...')).toBe(true);
+    expect(got).not.toContain('Secret St');
+    expect(got.length).toBeLessThanOrEqual(103); // 100 chars + '...'
+  });
+
+  it('keeps short strings + small structures verbatim', () => {
+    expect(truncateForLog({ a: 'short', b: 1, c: true, d: null })).toEqual({ a: 'short', b: 1, c: true, d: null });
+  });
+
+  it('summarizes large arrays and recurses small ones', () => {
+    expect(truncateForLog({ big: [1, 2, 3, 4, 5, 6] })).toEqual({ big: '[Array(6)]' });
+    const out = truncateForLog({ small: [{ s: 'y'.repeat(150) }] }) as { small: Array<{ s: string }> };
+    expect(out.small[0]!.s.endsWith('...')).toBe(true);
+  });
+
+  it('caps recursion depth (no runaway on deep nesting)', () => {
+    const deep = { l1: { l2: { l3: { l4: { l5: 'too deep' } } } } };
+    expect(truncateForLog(deep)).toEqual({ l1: { l2: { l3: { l4: '[Object]' } } } });
+  });
+});
 
 describe('redactHttpHeaders', () => {
   it('fully redacts authorization and cookie (no partial leak)', () => {

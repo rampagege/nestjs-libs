@@ -271,31 +271,44 @@ export class LoggerInterceptor implements NestInterceptor {
    * Truncate large data objects for logging
    */
   private truncateData(data: unknown): unknown {
-    if (data === null || data === undefined) {
-      return data;
-    }
-
-    if (typeof data === 'string') {
-      return data.length > 200 ? `${data.slice(0, 200)}...` : data;
-    }
-
-    if (typeof data !== 'object') {
-      return data;
-    }
-
-    // For objects, create a truncated copy
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
-      if (typeof value === 'string' && value.length > 100) {
-        result[key] = `${value.slice(0, 100)}...`;
-      } else if (Array.isArray(value) && value.length > 5) {
-        result[key] = `[Array(${value.length})]`;
-      } else {
-        result[key] = value;
-      }
-    }
-    return result;
+    return truncateForLog(data);
   }
+}
+
+const MAX_LOG_FIELD_STRING = 100;
+const MAX_LOG_DEPTH = 4;
+
+/**
+ * Truncate data for logging: long strings clipped, big arrays summarized, and
+ * nested objects recursed. The non-recursive version left deep fields untouched,
+ * so request payloads dumped large + sensitive values in full (e.g. streamChat's
+ * environment.enhancements.careContext — the whole family context: address,
+ * members, routines — landed in DEBUG logs). Recursing truncates those at every
+ * level; bounded by depth so it can't run away on cyclic/huge structures.
+ */
+export function truncateForLog(data: unknown, depth = 0): unknown {
+  if (data === null || data === undefined) return data;
+  if (typeof data === 'string') {
+    return data.length > 200 ? `${data.slice(0, 200)}...` : data;
+  }
+  if (typeof data !== 'object') return data;
+  if (depth >= MAX_LOG_DEPTH) return '[Object]';
+  if (Array.isArray(data)) {
+    return data.length > 5 ? `[Array(${data.length})]` : data.map((v) => truncateForLog(v, depth + 1));
+  }
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+    if (typeof value === 'string') {
+      result[key] = value.length > MAX_LOG_FIELD_STRING ? `${value.slice(0, MAX_LOG_FIELD_STRING)}...` : value;
+    } else if (Array.isArray(value) && value.length > 5) {
+      result[key] = `[Array(${value.length})]`;
+    } else if (value && typeof value === 'object') {
+      result[key] = truncateForLog(value, depth + 1);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
 }
 
 function maskWsHeaders(headers?: Record<string, unknown>) {
