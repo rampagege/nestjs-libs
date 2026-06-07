@@ -33,7 +33,8 @@
  *
  * 安全模型：
  * - 自动跳过非 RPC 上下文（HTTP / GraphQL 健康检查等不受影响）
- * - 未配置 GRPC_SERVICE_TOKEN 时跳过验证（仅 local/dev；prd/stg 已被启动校验挡住）
+ * - 未配置 GRPC_SERVICE_TOKEN 时跳过验证（local/dev/stg 可信部署）；prd 缺 token 由
+ *   bootstrap 启动硬门 throw 挡住（见 boot/bootstrap.ts），不会带着 fail-open 跑起来
  * - 配置后，缺少或错误的 token 返回 UNAUTHENTICATED
  */
 

@@ -105,6 +105,16 @@ export async function bootstrap(
   // --- NODE_ENV 检查（api / grpc 必须设置） ---
   if ((isApi || isGrpc) && !process.env.NODE_ENV) throw new Error('NODE_ENV is not set');
 
+  // --- gRPC 服务间鉴权硬门 ---
+  // GrpcServiceTokenGuard 在 GRPC_SERVICE_TOKEN 未配置时 fail-open（warn + 放行）。
+  // 生产环境绝不允许 fail-open，否则服务间 gRPC 无鉴权。stg/dev 是可信部署，不卡启动
+  // （guard 运行时降 warn 放行）。
+  if (SysEnv.environment.isProd && !process.env.GRPC_SERVICE_TOKEN) {
+    throw Oops.Panic.Config(
+      'GRPC_SERVICE_TOKEN is required in production — gRPC service-to-service auth would otherwise fail open',
+    );
+  }
+
   const now = Date.now();
 
   // --- 日志级别 ---
@@ -136,12 +146,12 @@ export async function bootstrap(
   // 跟基类 INestApplication<any> 约束不兼容. 用 unknown 中转 + cast 让 NestFactory
   // 不再尝试推 NestExpressApplication 泛型; 同时下游 AnyExceptionFilter / onInit /
   // runApp 收到合适形态.
-  const app = (await (NestFactory.create as unknown as (...args: unknown[]) => Promise<NestExpressApplication>)(
+  const app = await (NestFactory.create as unknown as (...args: unknown[]) => Promise<NestExpressApplication>)(
     wrapWithBootModule(AppModule),
     {
       logger: new LogtapeNestLogger(),
     },
-  ));
+  );
   if (isApi) {
     app.set('query parser', 'extended');
   }
