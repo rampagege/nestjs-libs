@@ -1,4 +1,4 @@
-import { Catch } from '@nestjs/common';
+import { Catch, HttpException } from '@nestjs/common';
 
 import { getAppLogger } from '@app/utils/app-logger';
 
@@ -79,8 +79,40 @@ export class GrpcExceptionFilter implements ExceptionFilter {
       return this.handleZodError(exception);
     }
 
+    // NestJS HttpException — most often an unmatched-route NotFoundException from the hybrid
+    // HTTP health server (a gRPC service only exposes GET /health*, so stray HTTP probes like
+    // POST /graphql / POST /health 404). A client-side 4xx must NOT be logged as a server ERROR
+    // or sent to Sentry — that turns harmless misdirected traffic into false error-dashboard
+    // noise. Map to the matching gRPC status; ERROR + Sentry stay only for 5xx.
+    if (exception instanceof HttpException) {
+      return this.handleHttpException(exception);
+    }
+
     // 其他未知错误
     return this.handleUnexpectedError(exception);
+  }
+
+  private handleHttpException(exception: HttpException): Observable<never> {
+    const httpStatus = exception.getStatus();
+    const message = exception.message;
+    const grpcError: GrpcError = {
+      httpStatus,
+      errorCode: httpStatus >= 500 ? '0x0401' : '0x0101',
+      businessCode: httpStatus >= 500 ? 'INTERNAL_ERROR' : 'CLIENT_ERROR',
+      userMessage: message,
+      internalDetails: message,
+      provider: this.provider,
+    };
+
+    if (httpStatus >= 500) {
+      this.logger.error`[HttpException ${httpStatus}] ${message} ${exception}`;
+      Sentry.captureException(exception);
+    } else {
+      // 4xx = client error (unmatched route, bad method/param) — WARN, no Sentry.
+      this.logger.warning`[HttpException ${httpStatus}] ${message}`;
+    }
+
+    return throwError(() => ({ code: this.httpStatusToGrpcStatus(httpStatus), details: JSON.stringify(grpcError) }));
   }
 
   private isOopsException(error: unknown): error is IOopsException {

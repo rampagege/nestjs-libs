@@ -187,4 +187,44 @@ describe('GrpcExceptionFilter', () => {
       }
     });
   });
+
+  describe('HttpException (unmatched HTTP route on the hybrid health server)', () => {
+    it('NotFoundException (404) maps to NOT_FOUND, not INTERNAL — stray probe is a 4xx client error', async () => {
+      // POST /graphql / POST /health on a gRPC service (only GET /health* exists) → NotFoundException.
+      // Before: fell to handleUnexpectedError → ERROR + Sentry + gRPC INTERNAL(500). Now: client 4xx.
+      const { NotFoundException } = await import('@nestjs/common');
+      const { host } = mockGrpcHost();
+      const exception = new NotFoundException('Cannot POST /graphql');
+
+      const result$ = filter.catch(exception, host);
+
+      try {
+        await firstValueFrom(result$);
+        expect(true).toBe(false);
+      } catch (error: unknown) {
+        const grpcError = error as { code: number; details: string };
+        expect(grpcError.code).toBe(status.NOT_FOUND);
+        const parsed = JSON.parse(grpcError.details);
+        expect(parsed.httpStatus).toBe(404);
+        expect(parsed.businessCode).toBe('CLIENT_ERROR'); // not INTERNAL_ERROR
+      }
+    });
+
+    it('a 5xx HttpException still maps to INTERNAL (ERROR path preserved)', async () => {
+      const { InternalServerErrorException } = await import('@nestjs/common');
+      const { host } = mockGrpcHost();
+      const exception = new InternalServerErrorException('boom');
+
+      const result$ = filter.catch(exception, host);
+
+      try {
+        await firstValueFrom(result$);
+        expect(true).toBe(false);
+      } catch (error: unknown) {
+        const grpcError = error as { code: number; details: string };
+        expect(grpcError.code).toBe(status.INTERNAL);
+        expect(JSON.parse(grpcError.details).businessCode).toBe('INTERNAL_ERROR');
+      }
+    });
+  });
 });
