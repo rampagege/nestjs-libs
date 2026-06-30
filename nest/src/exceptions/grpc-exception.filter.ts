@@ -89,7 +89,7 @@ export class GrpcExceptionFilter implements ExceptionFilter {
     }
 
     // 其他未知错误
-    return this.handleUnexpectedError(exception);
+    return this.handleUnexpectedError(exception, host);
   }
 
   private handleHttpException(exception: HttpException): Observable<never> {
@@ -128,6 +128,46 @@ export class GrpcExceptionFilter implements ExceptionFilter {
     );
   }
 
+  /**
+   * 从 gRPC 入站参数提取调用方用户上下文，用于 Sentry 影响面归因。
+   * 来源优先级：入站 metadata（x-user-id / x-device-id，由调用方 userContextMiddleware 注入）
+   * → 回退到请求体字段（部分 gRPC 方法的 payload 自带 userId/deviceId）。
+   */
+  private extractUserContext(host: ArgumentsHost): { userId?: string; deviceId?: string } {
+    try {
+      const data = host.getArgByIndex(0);
+      const metadata = host.getArgByIndex(1);
+      const fromMeta = (key: string): string | undefined => {
+        const v = metadata?.get?.(key);
+        const first = Array.isArray(v) ? v[0] : v;
+        return typeof first === 'string' ? first : undefined;
+      };
+      const userId = fromMeta('x-user-id') ?? (typeof data?.userId === 'string' ? data.userId : undefined);
+      const deviceId = fromMeta('x-device-id') ?? (typeof data?.deviceId === 'string' ? data.deviceId : undefined);
+      return { userId, deviceId };
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * 上报 fatal 异常到 Sentry，并附带调用方用户上下文（修复 "Users Impacted=0"）。
+   * 拿不到任何上下文时退回裸上报，保持原行为。
+   */
+  private captureFatalToSentry(exception: unknown, host: ArgumentsHost): void {
+    const { userId, deviceId } = this.extractUserContext(host);
+    if (!userId && !deviceId) {
+      Sentry.captureException(exception);
+      return;
+    }
+    Sentry.withScope((scope) => {
+      if (userId) scope.setUser({ id: userId });
+      if (deviceId) scope.setTag('deviceId', deviceId);
+      scope.setTag('provider', this.provider);
+      Sentry.captureException(exception);
+    });
+  }
+
   private handleOopsException(exception: IOopsException, host: ArgumentsHost): Observable<unknown> {
     const isFatal = exception.isFatal();
 
@@ -145,7 +185,7 @@ export class GrpcExceptionFilter implements ExceptionFilter {
     if (isFatal) {
       this.logger
         .error`[${exception.getCombinedCode()}] ${exception.userMessage} | ${exception.internalDetails} ${exception}`;
-      Sentry.captureException(exception);
+      this.captureFatalToSentry(exception, host);
 
       const grpcStatus = this.httpStatusToGrpcStatus(exception.httpStatus);
       // 直接抛出 { code, details } 而非 RpcException
@@ -192,7 +232,7 @@ export class GrpcExceptionFilter implements ExceptionFilter {
       // Panic: gRPC INTERNAL + Sentry
       this.logger
         .error`[${exception.getCombinedCode()}] Oops.Panic ${exception.userMessage} | ${exception.internalDetails} ${exception}`;
-      Sentry.captureException(exception);
+      this.captureFatalToSentry(exception, host);
 
       const grpcStatus = this.httpStatusToGrpcStatus(exception.httpStatus);
       return throwError(() => ({ code: grpcStatus, details }));
@@ -236,9 +276,9 @@ export class GrpcExceptionFilter implements ExceptionFilter {
     return throwError(() => ({ code: status.INVALID_ARGUMENT, details: JSON.stringify(grpcError) }));
   }
 
-  private handleUnexpectedError(exception: unknown): Observable<never> {
+  private handleUnexpectedError(exception: unknown, host: ArgumentsHost): Observable<never> {
     this.logger.error`[UnknownError] ${exception}`;
-    Sentry.captureException(exception);
+    this.captureFatalToSentry(exception, host);
 
     const grpcError: GrpcError = {
       httpStatus: 500,

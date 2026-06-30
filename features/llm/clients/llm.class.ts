@@ -29,6 +29,7 @@
 
 import { SysEnv } from '@app/env';
 import { Oops } from '@app/nest/exceptions/oops';
+import { RequestContext } from '@app/nest/trace/request-context';
 import { getAppLogger } from '@app/utils/app-logger';
 import { ApiFetcher } from '@app/utils/fetch';
 
@@ -769,6 +770,8 @@ export class LLM {
     }
 
     Sentry.withScope((scope) => {
+      const userId = RequestContext.get<string>('userId');
+      if (userId) scope.setUser({ id: userId });
       scope.setTag('llm.id', id);
       scope.setTag('llm.method', method);
       scope.setTag('llm.model', modelKey);
