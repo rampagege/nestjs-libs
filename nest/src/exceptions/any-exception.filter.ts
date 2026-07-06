@@ -403,17 +403,19 @@ export class AnyExceptionFilter implements ExceptionFilter {
    * 从请求中提取用户语言偏好
    *
    * 【设计意图】
-   * - 只提取 x-locale 请求头的原始值
-   * - 不做任何规范化、验证、fallback
-   * - 返回 null 表示用户未指定语言偏好
-   * - 所有语言逻辑交给 i18nService 处理
+   * - 优先 x-locale 请求头(客户端设备语言,显式意图最高)
+   * - 兜底 request.user.language —— 认证层可选注入的账号语言偏好
+   *   (calo: auth 时把 User.language ?? Family.language 挂到 req.user.language,
+   *   客户端不发 header 也能按账号语言返回错误文案;不注入的产品(如 unee)行为不变)
+   * - 不做任何规范化、验证 —— 语言解析统一交给 i18nService 处理
+   * - 返回 null 表示无任何语言信号(i18nService 走默认语言)
    */
   private getLocaleFromRequest(request?: IdentityRequest): string | null {
-    if (!request?.headers) {
+    if (!request) {
       return null;
     }
 
-    const xLocale = request.headers['x-locale'];
+    const xLocale = request.headers?.['x-locale'];
 
     if (typeof xLocale === 'string') {
       const trimmed = xLocale.trim();
@@ -422,6 +424,11 @@ export class AnyExceptionFilter implements ExceptionFilter {
       if (trimmed && trimmed !== '*') {
         return trimmed; // 原样返回：'zh-Hans', 'zh-hans', 'en', 'zh', ...
       }
+    }
+
+    const userLanguage = request.user?.['language'];
+    if (typeof userLanguage === 'string' && userLanguage.trim()) {
+      return userLanguage.trim();
     }
 
     return null;
