@@ -15,7 +15,7 @@ interface OopsConfig {
 }
 
 interface BlockConfig extends OopsConfig {
-  httpStatus: 400 | 401 | 403 | 404 | 409 | 429;
+  httpStatus: 400 | 401 | 403 | 404 | 409 | 413 | 429;
 }
 
 interface PanicConfig {
@@ -64,7 +64,7 @@ namespace Oops {
    * WARN 日志，不触发 Sentry。
    */
   export class Block extends OopsError {
-    readonly httpStatus: 400 | 401 | 403 | 404 | 409 | 429;
+    readonly httpStatus: 400 | 401 | 403 | 404 | 409 | 413 | 429;
     readonly errorCode: ErrorCodeValue;
     readonly oopsCode: string;
     readonly userMessage: string;
