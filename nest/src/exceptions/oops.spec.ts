@@ -32,6 +32,28 @@ describe('Oops.Block (4xx)', () => {
     expect(err instanceof Oops.Block).toBe(true);
     expect(err instanceof Oops).toBe(false);
   });
+
+  it('should accept 408 (request timeout) and remain non-fatal', () => {
+    const err = new Oops.Block({
+      httpStatus: 408,
+      errorCode: '0x0101',
+      oopsCode: 'ST01',
+      userMessage: 'stream timeout',
+    });
+    expect(err.httpStatus).toBe(408);
+    expect(err.isFatal()).toBe(false);
+  });
+
+  it('should accept 415 (unsupported media type) and remain non-fatal', () => {
+    const err = new Oops.Block({
+      httpStatus: 415,
+      errorCode: '0x0101',
+      oopsCode: 'ST02',
+      userMessage: 'unsupported audio format',
+    });
+    expect(err.httpStatus).toBe(415);
+    expect(err.isFatal()).toBe(false);
+  });
 });
 
 describe('Oops.Panic (500)', () => {
@@ -55,6 +77,38 @@ describe('Oops.Panic (500)', () => {
       userMessage: '系统繁忙',
     });
     expect(err.oopsCode).toBe('');
+  });
+
+  it('should default httpStatus to 500 when omitted', () => {
+    const err = new Oops.Panic({
+      errorCode: '0x0401',
+      oopsCode: 'SY01',
+      userMessage: '系统繁忙',
+    });
+    expect(err.httpStatus).toBe(500);
+    expect(err.isFatal()).toBe(true);
+  });
+
+  it('should accept 502 (bad gateway) and remain fatal', () => {
+    const err = new Oops.Panic({
+      httpStatus: 502,
+      errorCode: '0x0401',
+      oopsCode: 'SY02',
+      userMessage: 'upstream failed',
+    });
+    expect(err.httpStatus).toBe(502);
+    expect(err.isFatal()).toBe(true);
+  });
+
+  it('should accept 503 (service unavailable) and remain fatal', () => {
+    const err = new Oops.Panic({
+      httpStatus: 503,
+      errorCode: '0x0401',
+      oopsCode: 'SY03',
+      userMessage: 'upstream unavailable',
+    });
+    expect(err.httpStatus).toBe(503);
+    expect(err.isFatal()).toBe(true);
   });
 });
 

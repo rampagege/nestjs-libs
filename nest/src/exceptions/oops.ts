@@ -15,10 +15,12 @@ interface OopsConfig {
 }
 
 interface BlockConfig extends OopsConfig {
-  httpStatus: 400 | 401 | 403 | 404 | 409 | 413 | 429;
+  httpStatus: 400 | 401 | 403 | 404 | 408 | 409 | 413 | 415 | 429;
 }
 
 interface PanicConfig {
+  /** 缺省 500；502/503 用于上游依赖（如 Azure STT）失败透传 */
+  httpStatus?: 500 | 502 | 503;
   errorCode: ErrorCodeValue;
   oopsCode?: string;
   userMessage: string;
@@ -64,7 +66,7 @@ namespace Oops {
    * WARN 日志，不触发 Sentry。
    */
   export class Block extends OopsError {
-    readonly httpStatus: 400 | 401 | 403 | 404 | 409 | 413 | 429;
+    readonly httpStatus: 400 | 401 | 403 | 404 | 408 | 409 | 413 | 415 | 429;
     readonly errorCode: ErrorCodeValue;
     readonly oopsCode: string;
     readonly userMessage: string;
@@ -83,13 +85,14 @@ namespace Oops {
   }
 
   /**
-   * 系统故障 — 500 Internal Server Error
+   * 系统故障 — 5xx server / upstream failure
    *
    * 大楼停电了：DB 挂了、外部服务不可达、配置缺失。
+   * 缺省 500；上游依赖失败可显式标 502/503（如 Azure Fast STT 透传）。
    * ERROR 日志，触发 Sentry。
    */
   export class Panic extends OopsError {
-    readonly httpStatus = 500 as const;
+    readonly httpStatus: 500 | 502 | 503;
     readonly errorCode: ErrorCodeValue;
     readonly oopsCode: string;
     readonly userMessage: string;
@@ -98,6 +101,7 @@ namespace Oops {
 
     constructor(config: PanicConfig) {
       super(config.internalDetails ?? config.userMessage, { cause: config.cause });
+      this.httpStatus = config.httpStatus ?? 500;
       this.errorCode = config.errorCode;
       this.oopsCode = config.oopsCode ?? '';
       this.userMessage = config.userMessage;
