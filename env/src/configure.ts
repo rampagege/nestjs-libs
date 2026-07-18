@@ -418,6 +418,31 @@ export class AbstractEnvironmentVariables implements HostSetVariables {
   hostKeys: Record<number, Array<string>> = {};
 }
 
+/**
+ * SysEnv / AbstractEnvironmentVariables 上可映射到 `process.env` 的配置字段名。
+ *
+ * - 与 class 字段同名（如 `AI_GOOGLE_VERTEX_API_KEY`），供 bootstrap `requiredEnvs` 等启动契约使用
+ * - 只保留标量配置形态（string | number | boolean | nullish），排除 `environment` 等对象 getter
+ * - 再排除已知非 env 的 getter / 内部字段（不可映射到 process.env）
+ *
+ * @example
+ * ```ts
+ * const keys: SysEnvConfigKey[] = ['AI_GOOGLE_VERTEX_API_KEY', 'DATABASE_URL'];
+ * ```
+ */
+type AbstractEnvironmentScalar = string | number | boolean | undefined | null;
+
+type AbstractEnvironmentScalarKey = {
+  [K in keyof AbstractEnvironmentVariables]-?: AbstractEnvironmentVariables[K] extends AbstractEnvironmentScalar
+    ? K
+    : never;
+}[keyof AbstractEnvironmentVariables];
+
+/** Getters / non-env members that look scalar but are not process.env keys. */
+type AbstractEnvironmentNonEnvScalarKey = 'isNodeDevelopment' | 'isCliMode' | 'NODE_NAME' | 'hostIndex';
+
+export type SysEnvConfigKey = Exclude<AbstractEnvironmentScalarKey, AbstractEnvironmentNonEnvScalarKey> & string;
+
 export interface ISysAppSettingRecord {
   key: string;
   scope: string;

@@ -40,6 +40,7 @@ import Redis from 'ioredis';
 import morgan from 'morgan';
 import responseTime from 'response-time';
 
+import type { SysEnvConfigKey } from '@app/env';
 import type { Server } from '@grpc/grpc-js';
 import type { PackageDefinition } from '@grpc/proto-loader';
 import type { DynamicModule, ForwardReference, INestApplication, LogLevel, Type } from '@nestjs/common';
@@ -74,6 +75,19 @@ export interface BootstrapOptions {
     name: string;
     version: string;
   };
+  /**
+   * 本进程启动前必须非空的 SysEnv 配置字段（= process.env key）。
+   *
+   * - 类型为 {@link SysEnvConfigKey}：只能填 AbstractEnvironmentVariables 上的配置名，拼写错误在编译期暴露
+   * - 与 mode 无关（api / grpc / scheduler 均校验）；共享 env 字段默认 optional，由各 app 在此声明硬依赖
+   * - 判空：`process.env[name]` 缺失或 trim 后为空 → Panic.Config（crashloop）
+   *
+   * @example
+   * ```ts
+   * requiredEnvs: ['AI_GOOGLE_VERTEX_API_KEY']
+   * ```
+   */
+  requiredEnvs?: readonly SysEnvConfigKey[];
   /** gRPC 微服务配置。api 模式下可选，grpc 模式下必需 */
   grpc?: {
     package: string | string[];
@@ -91,6 +105,26 @@ export interface BootstrapOptions {
   grpcProvider?: string;
   /** HTTP 端口（grpc 模式下用于健康检查），默认从 SysEnv.PORT 读取 */
   httpPort?: number;
+}
+
+/**
+ * 校验 app 声明的硬依赖 env：`process.env[key]` 必须存在且非空白。
+ *
+ * 与 mode 无关。共享 SysEnv 字段保持 @IsOptional；各 app 通过 BootstrapOptions.requiredEnvs 声明。
+ */
+export function assertRequiredEnvs(keys?: readonly SysEnvConfigKey[]): void {
+  if (!keys?.length) return;
+
+  const missing = keys.filter((name) => {
+    const value = process.env[name];
+    return value == null || value.trim() === '';
+  });
+
+  if (missing.length > 0) {
+    throw Oops.Panic.Config(
+      `required env(s) not set: ${missing.join(', ')} — declare only what this process needs; shared SysEnv fields stay optional`,
+    );
+  }
 }
 
 export async function bootstrap(
@@ -114,6 +148,9 @@ export async function bootstrap(
       'GRPC_SERVICE_TOKEN is required in production — gRPC service-to-service auth would otherwise fail open',
     );
   }
+
+  // 全 mode：app 声明的硬依赖（如 LLM key）；缺则 crashloop，避免请求期软失败
+  assertRequiredEnvs(options?.requiredEnvs);
 
   const now = Date.now();
 
