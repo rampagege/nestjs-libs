@@ -64,7 +64,7 @@ const FINGERPRINT_HEX_LENGTH = 12;
 const EPHEMERAL_REDACTION_KEY = randomBytes(32).toString('hex');
 
 const SENSITIVE_PAYLOAD_KEY_PATTERN =
-  /^(authorization|cookie|set-cookie|password|passcode|token|secret|api[-_]?key|apikey|access[-_]?token|refresh[-_]?token)$/i;
+  /^(authorization|cookie|set-cookie|password|passcode|token|secret|api[-_]?key|apikey|access[-_]?token|refresh[-_]?token|fromAddress|subject|snippet|bodyText)$/i;
 const SENSITIVE_HEADER_KEY_PATTERN =
   /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|x-auth-token|x-service-token|x-access-token|x-refresh-token|x-csrf-token)$/i;
 

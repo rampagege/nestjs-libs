@@ -5,6 +5,7 @@ import { RequestContext } from '@app/nest/trace/request-context';
 import { getAppLogger } from '@app/utils/app-logger';
 
 import { normalizeHeadersForLog, normalizePayloadForLog } from './log-redaction';
+import { PRIVATE_PAYLOAD } from './private-payload.decorator';
 
 import { context, trace } from '@opentelemetry/api';
 import * as _ from 'radash';
@@ -31,6 +32,12 @@ export class LoggerInterceptor implements NestInterceptor {
   private readonly logger = getAppLogger('LoggerInterceptor');
 
   public intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> | Promise<Observable<unknown>> {
+    if (
+      Reflect.getMetadata(PRIVATE_PAYLOAD, ctx.getHandler()) ||
+      Reflect.getMetadata(PRIVATE_PAYLOAD, ctx.getClass())
+    ) {
+      return next.handle();
+    }
     // 注意：Subscription 必须直接返回原始结果，任何额外的 pipe 都会把 AsyncIterator 变成 Observable，
     // 导致 graphql-transport-ws 收到 {} 而不是流式数据。
     // NestJS switchToHttp() 在 GraphQL 场景返回空对象，类型声明为可空

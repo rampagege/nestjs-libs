@@ -1187,7 +1187,9 @@ export class LLM {
       const effectiveThinking = resolveThinkingForModel(modelKey, spec.requestedThinking).thinking;
       LLM.logStart(id, 'generateObject', modelKey, effectiveThinking, fb, spec.vertex?.tier, spec.vertex?.requestType);
       LLM.logInputSummary(id, schema, messages, instructions);
-      LLM.captureRequest(id, 'generateObject', modelKey, schema, messages, instructions);
+      if (telemetry.recordInputs !== false) {
+        LLM.captureRequest(id, 'generateObject', modelKey, schema, messages, instructions);
+      }
 
       const languageModel = createLanguageModel(modelKey);
       const provider = getProvider(modelKey);
@@ -1238,7 +1240,12 @@ export class LLM {
         };
       } catch (error) {
         cleanup();
-        const classified = LLM.classifyError(error, modelKey);
+        // SDK errors can contain prompt/response bodies, including in their causes.
+        const safeError =
+          telemetry.recordInputs === false || telemetry.recordOutputs === false
+            ? new Error('Private model request failed')
+            : error;
+        const classified = LLM.classifyError(safeError, modelKey);
         LLM.logError(id, 'generateObject', modelKey, classified);
         throw classified;
       }
