@@ -18,6 +18,8 @@
  *
  * 两种模式都**不**调用 context.bind(req/res)，不 patch EventEmitter。
  */
+import { redactHttpUrl } from '../interceptors/http-url-redaction';
+
 import { context, propagation, SpanKind, trace } from '@opentelemetry/api';
 
 import type { NextFunction, Request, Response } from 'express';
@@ -64,7 +66,7 @@ export function otelTraceMiddleware(req: Request, res: Response, next: NextFunct
   // 从请求头提取 propagation context（支持上游传入 traceparent）
   const parentCtx = propagation.extract(context.active(), req.headers);
 
-  const span = tracer.startSpan(`${req.method} ${url}`, { kind: SpanKind.SERVER }, parentCtx);
+  const span = tracer.startSpan(`${req.method} ${redactHttpUrl(url)}`, { kind: SpanKind.SERVER }, parentCtx);
 
   const spanCtx = trace.setSpan(parentCtx, span);
   const { traceId, spanId } = span.spanContext();

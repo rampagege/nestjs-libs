@@ -23,6 +23,8 @@ import { getAppLogger } from '@app/utils/app-logger';
 import { normalizeTimezone } from '@app/utils/datetime';
 import { maskSecret } from '@app/utils/security';
 
+import { redactHttpUrl } from '../interceptors/http-url-redaction';
+
 import os from 'node:os';
 
 import { Temporal } from '@js-temporal/polyfill';
@@ -75,6 +77,8 @@ export type BootstrapMode = 'api' | 'grpc' | 'scheduler';
 export interface BootstrapOptions {
   /** 启动模式：api（默认）、grpc、scheduler */
   mode?: BootstrapMode;
+  /** Paths whose request URLs/referrers contain private authorization material. */
+  privateHttpPaths?: readonly string[];
   packageJson?: {
     name: string;
     version: string;
@@ -386,13 +390,20 @@ export async function bootstrap(
       return typeof raw === 'string' ? raw : '-';
     });
 
+    morgan.token('safe-url', (req) => redactHttpUrl(req.url ?? ''));
+    morgan.token('safe-referrer', (req) => redactHttpUrl(String(req.headers.referer ?? req.headers.referrer ?? '-')));
     // combined 格式 + response-time（毫秒）
     app.use(
       morgan(
-        ':remote-addr xff=":xff" - :remote-user [:date[clf]] ":method :url HTTP/:http-version" :status :res[content-length] ":response-time ms" ":referrer" ":user-agent"',
+        ':remote-addr xff=":xff" - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":response-time ms" ":safe-referrer" ":user-agent"',
         {
-          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- boolean OR, not nullish fallback
-          skip: (req) => req.url?.startsWith('/health') || req.url === '/',
+           
+          skip: (req) =>
+            req.url?.startsWith('/health') ||
+            req.url === '/' ||
+            (options?.privateHttpPaths ?? []).some(
+              (path) => req.url?.split('?')[0] === path || req.url?.startsWith(path + '/'),
+            ),
         },
       ),
     );

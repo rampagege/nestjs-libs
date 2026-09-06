@@ -51,6 +51,7 @@ import { getOpenAI, getOpenRouter } from './llm.clients';
 import { createLanguageModel } from './model-router';
 import { resolveOpenRouterOptions } from './openrouter.client';
 import { disableThinkingOptions, reasoningEffortOptions } from './options.helpers';
+import { privateModel, privateModelError } from './private-model';
 import { createStreamLifecycle } from './stream-lifecycle';
 import { DEFAULT_LLM_TELEMETRY as DEFAULT_TELEMETRY } from './telemetry-policy';
 
@@ -1191,7 +1192,10 @@ export class LLM {
         LLM.captureRequest(id, 'generateObject', modelKey, schema, messages, instructions);
       }
 
-      const languageModel = createLanguageModel(modelKey);
+      const languageModel = privateModel(
+        createLanguageModel(modelKey),
+        telemetry.recordInputs === false || telemetry.recordOutputs === false,
+      );
       const provider = getProvider(modelKey);
       const providerOptions = buildProviderOptions(
         provider,
@@ -1242,9 +1246,7 @@ export class LLM {
         cleanup();
         // SDK errors can contain prompt/response bodies, including in their causes.
         const safeError =
-          telemetry.recordInputs === false || telemetry.recordOutputs === false
-            ? new Error('Private model request failed')
-            : error;
+          telemetry.recordInputs === false || telemetry.recordOutputs === false ? privateModelError(error) : error;
         const classified = LLM.classifyError(safeError, modelKey);
         LLM.logError(id, 'generateObject', modelKey, classified);
         throw classified;
@@ -1719,7 +1721,10 @@ export class LLM {
     }
     LLM.logStart(id, 'streamText', modelKey, spec.thinking, undefined, spec.vertex?.tier, spec.vertex?.requestType);
 
-    const languageModel = createLanguageModelForCall(modelKey, undefined);
+    const languageModel = privateModel(
+      createLanguageModelForCall(modelKey, undefined),
+      telemetry.recordInputs === false || telemetry.recordOutputs === false,
+    );
     const provider = getProvider(modelKey);
     const providerOptions = buildProviderOptions(provider, spec.thinking, modelKey, openrouterOptions, spec.bedrock);
     const tierHeaders = buildTierHeaders(modelKey, spec.vertex?.tier, spec.vertex?.requestType);
@@ -1757,7 +1762,14 @@ export class LLM {
       {
         cleanup,
         logErrorEvent: (event) => {
-          LLM.logErrorEvent(id, 'streamText', modelKey, event.error);
+          LLM.logErrorEvent(
+            id,
+            'streamText',
+            modelKey,
+            telemetry.recordInputs === false || telemetry.recordOutputs === false
+              ? privateModelError(event.error)
+              : event.error,
+          );
         },
         logSuccess: (event) => {
           LLM.logEnd(
@@ -1777,7 +1789,12 @@ export class LLM {
             .info`[LLM:abort] id=${id}, method=streamText, model=${modelKey}, duration=${Date.now() - startTime}ms`;
         },
         logFailure: (error) => {
-          LLM.logError(id, 'streamText', modelKey, error);
+          LLM.logError(
+            id,
+            'streamText',
+            modelKey,
+            telemetry.recordInputs === false || telemetry.recordOutputs === false ? privateModelError(error) : error,
+          );
         },
       },
     );

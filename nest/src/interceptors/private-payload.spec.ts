@@ -33,3 +33,11 @@ it('short email fields are private regardless of string length', () => {
   expect(safe).not.toContain('PRIVATE_');
   expect(safe).toContain('sensitive_field');
 });
+
+it('diagnostic URLs exclude OAuth codes, state, fragments and opaque path tokens', async () => {
+  const { redactHttpUrl } = await import('./http-url-redaction');
+  expect(
+    redactHttpUrl('https://calo.example/api/email-connections/google/callback?code=SECRET&state=SECRET#SECRET'),
+  ).toBe('https://calo.example/api/email-connections/google/callback');
+  expect(redactHttpUrl('/api/email-connections/link/' + 's'.repeat(43))).toBe('/api/email-connections/link/[redacted]');
+});

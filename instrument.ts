@@ -67,6 +67,7 @@ import {
   resolveAiSdkOtelMissingDependencyDiagnostic,
   resolveLangfuseBaseUrl,
 } from './instrument-helpers';
+import { redactHttpUrl } from './nest/src/interceptors/http-url-redaction';
 
 import { config as dotenvConfig } from '@dotenvx/dotenvx';
 import { getLogger } from '@logtape/logtape';
@@ -245,10 +246,13 @@ function bootstrapSentry() {
       // 不做 performance monitoring，只做错误追踪
       tracesSampleRate: 0,
       beforeSend(event: {
+        request?: { url?: string; query_string?: unknown };
         message?: string;
         logentry?: { formatted?: string; message?: string };
         exception?: { values?: Array<{ type?: string; value?: string }> };
       }) {
+        if (event.request?.url) event.request.url = redactHttpUrl(event.request.url);
+        if (event.request) delete event.request.query_string;
         const message = event.message ?? event.logentry?.formatted ?? event.logentry?.message;
         const exceptionValues = event.exception?.values ?? [];
         const exceptionTexts = exceptionValues.map((v) => [v.type, v.value].filter(Boolean).join(':')).filter(Boolean);
@@ -326,7 +330,20 @@ function bootstrapOtel(langfuseProcessor: unknown | null, otlpProcessor: unknown
     //
     // Apps that want span name like `GET /users/:id` should install framework
     // instrumentation that resolves the route template and enriches the span.
-    instrumentations.push(new HttpInstrumentation());
+    instrumentations.push(
+      new HttpInstrumentation({
+        applyCustomAttributesOnSpan(span: {
+          attributes?: Record<string, unknown>;
+          setAttribute: (key: string, value: string) => void;
+        }) {
+          for (const key of ['http.url', 'http.target', 'url.full', 'url.path', 'http.request.header.referer']) {
+            const value = span.attributes?.[key];
+            if (typeof value === 'string') span.setAttribute(key, redactHttpUrl(value));
+          }
+          if (span.attributes?.['url.query'] !== undefined) span.setAttribute('url.query', '[redacted]');
+        },
+      }),
+    );
   } else if (httpInstrumentationEnabled && !HttpInstrumentation) {
     otelLogger.warning`${'APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true but @opentelemetry/instrumentation-http not installed'}`;
   }
