@@ -41,3 +41,22 @@ it('diagnostic URLs exclude OAuth codes, state, fragments and opaque path tokens
   ).toBe('https://calo.example/api/email-connections/google/callback');
   expect(redactHttpUrl('/api/email-connections/link/' + 's'.repeat(43))).toBe('/api/email-connections/link/[redacted]');
 });
+
+it('private HTTP error telemetry drops browser cookies, JWTs and login bodies', async () => {
+  const { configurePrivateHttpPaths, redactHttpRequestForTelemetry } = await import('./http-url-redaction');
+  configurePrivateHttpPaths(['/api/email-connections']);
+  try {
+    const result = redactHttpRequestForTelemetry({
+      url: '/api/email-connections/google/callback?code=PRIVATE_CODE',
+      method: 'GET',
+      headers: { cookie: 'PRIVATE_COOKIE', authorization: 'PRIVATE_JWT' },
+      data: 'PRIVATE_BODY',
+      cookies: 'PRIVATE_COOKIE',
+      query_string: 'PRIVATE_CODE',
+    });
+    expect(result).toEqual({ url: '/api/email-connections/google/callback', method: 'GET' });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_');
+  } finally {
+    configurePrivateHttpPaths([]);
+  }
+});

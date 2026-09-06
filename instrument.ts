@@ -67,7 +67,7 @@ import {
   resolveAiSdkOtelMissingDependencyDiagnostic,
   resolveLangfuseBaseUrl,
 } from './instrument-helpers';
-import { redactHttpUrl } from './nest/src/interceptors/http-url-redaction';
+import { redactHttpRequestForTelemetry, redactHttpUrl } from './nest/src/interceptors/http-url-redaction';
 
 import { config as dotenvConfig } from '@dotenvx/dotenvx';
 import { getLogger } from '@logtape/logtape';
@@ -251,8 +251,7 @@ function bootstrapSentry() {
         logentry?: { formatted?: string; message?: string };
         exception?: { values?: Array<{ type?: string; value?: string }> };
       }) {
-        if (event.request?.url) event.request.url = redactHttpUrl(event.request.url);
-        if (event.request) delete event.request.query_string;
+        if (event.request) event.request = redactHttpRequestForTelemetry(event.request);
         const message = event.message ?? event.logentry?.formatted ?? event.logentry?.message;
         const exceptionValues = event.exception?.values ?? [];
         const exceptionTexts = exceptionValues.map((v) => [v.type, v.value].filter(Boolean).join(':')).filter(Boolean);
