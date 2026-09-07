@@ -67,11 +67,7 @@ import {
   resolveAiSdkOtelMissingDependencyDiagnostic,
   resolveLangfuseBaseUrl,
 } from './instrument-helpers';
-import {
-  redactHttpRequestForTelemetry,
-  redactHttpUrlForPath,
-  redactQueryString,
-} from './nest/src/interceptors/http-url-redaction';
+import { redactHttpRequestForTelemetry, withSpanRedaction } from './nest/src/interceptors/http-url-redaction';
 
 import { config as dotenvConfig } from '@dotenvx/dotenvx';
 import { getLogger } from '@logtape/logtape';
@@ -284,12 +280,14 @@ function bootstrapSentry() {
  * 所有 span 100% recording → shouldExportSpan 默认只导出 scope='gen_ai' / 'ai' / 'chat' 给 Langfuse。
  */
 function bootstrapOtel(langfuseProcessor: unknown | null, otlpProcessor: unknown | null) {
+  // Every exporter sees redacted spans, including the ones an instrumentation
+  // ends on an error without running its custom-attribute hook.
   const spanProcessors: unknown[] = [];
-  if (langfuseProcessor) spanProcessors.push(langfuseProcessor);
-  if (otlpProcessor) spanProcessors.push(otlpProcessor);
+  if (langfuseProcessor) spanProcessors.push(withSpanRedaction(langfuseProcessor));
+  if (otlpProcessor) spanProcessors.push(withSpanRedaction(otlpProcessor));
   if (spanProcessors.length === 0) {
     otelLogger.debug`${'no processors, using minimal exporter'}`;
-    spanProcessors.push(new SimpleSpanProcessor(new MinimalSpanExporter()));
+    spanProcessors.push(withSpanRedaction(new SimpleSpanProcessor(new MinimalSpanExporter())));
   }
 
   // HTTP instrumentation is opt-in via APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true.
@@ -333,21 +331,9 @@ function bootstrapOtel(langfuseProcessor: unknown | null, otlpProcessor: unknown
     //
     // Apps that want span name like `GET /users/:id` should install framework
     // instrumentation that resolves the route template and enriches the span.
-    instrumentations.push(
-      new HttpInstrumentation({
-        applyCustomAttributesOnSpan(span: {
-          attributes?: Record<string, unknown>;
-          setAttribute: (key: string, value: string) => void;
-        }) {
-          for (const key of ['http.url', 'http.target', 'url.full', 'url.path', 'http.request.header.referer']) {
-            const value = span.attributes?.[key];
-            if (typeof value === 'string') span.setAttribute(key, redactHttpUrlForPath(value));
-          }
-          const query = span.attributes?.['url.query'];
-          if (typeof query === 'string') span.setAttribute('url.query', redactQueryString(query));
-        },
-      }),
-    );
+    // URL redaction lives in the span processor, not in applyCustomAttributesOnSpan:
+    // that hook does not run when a request errors out.
+    instrumentations.push(new HttpInstrumentation());
   } else if (httpInstrumentationEnabled && !HttpInstrumentation) {
     otelLogger.warning`${'APP_OTEL_HTTP_INSTRUMENTATION_ENABLED=true but @opentelemetry/instrumentation-http not installed'}`;
   }

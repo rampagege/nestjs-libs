@@ -14,6 +14,7 @@ import { Oops } from '@app/nest/exceptions/oops';
 
 import { parseModelSpec } from '../types/model.types';
 import { isRetryableError, LLM } from './llm.class';
+import { privateModelError } from './private-model';
 
 import { APICallError, NoObjectGeneratedError, NoOutputGeneratedError } from 'ai';
 import { afterEach, describe, expect, it } from 'bun:test';
@@ -249,5 +250,74 @@ describe('LLM safe API architecture', () => {
     expect(error).toBe(actualFailure);
     expect(error.provider).toBe('openrouter:gemini-2.5-flash-lite');
     expect(error.cause).toBe(raw);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 隐私脱敏不得改变 fallback 判定 —— 否则 privacy-mode 调用会静默退回「只试主模型」，
+// 正是上面 NoOutputGeneratedError 那条修复要解决的线上故障（24h 70 events / 36 users）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('privateModelError preserves retry and classification semantics', () => {
+  const cases: Array<[string, unknown]> = [
+    [
+      'APICallError 429',
+      new APICallError({ message: 'PRIVATE', url: 'https://p/x', requestBodyValues: { PRIVATE: 1 }, statusCode: 429 }),
+    ],
+    [
+      'APICallError 500',
+      new APICallError({ message: 'PRIVATE', url: 'https://p/x', requestBodyValues: {}, statusCode: 500 }),
+    ],
+    [
+      'APICallError 400',
+      new APICallError({ message: 'PRIVATE', url: 'https://p/x', requestBodyValues: {}, statusCode: 400 }),
+    ],
+    [
+      'APICallError 400 reasoning policy',
+      new APICallError({
+        message: 'PRIVATE prompt',
+        url: 'https://p/x',
+        requestBodyValues: {},
+        statusCode: 400,
+        responseBody: 'reasoning is mandatory for this model',
+      }),
+    ],
+    [
+      'NoObjectGeneratedError',
+      new NoObjectGeneratedError({
+        message: 'PRIVATE',
+        text: 'PRIVATE OUTPUT',
+        response: { id: 'PRIVATE_ID', timestamp: new Date(), modelId: 'm', headers: { PRIVATE: 'x' } },
+        usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          inputTokenDetails: { noCacheTokens: undefined, cacheReadTokens: undefined, cacheWriteTokens: undefined },
+          outputTokenDetails: { textTokens: undefined, reasoningTokens: undefined },
+        },
+        finishReason: 'stop',
+      }),
+    ],
+    ['NoOutputGeneratedError', new NoOutputGeneratedError({ message: 'PRIVATE' })],
+    ['timeout wording', new Error('the request timed out after 30s for PRIVATE')],
+    ['plain error', new Error('PRIVATE prompt body')],
+  ];
+
+  for (const [name, error] of cases) {
+    it(`keeps the retry decision and drops the payload for ${name}`, () => {
+      const redacted = privateModelError(error);
+      expect(isRetryableError(redacted)).toBe(isRetryableError(error));
+      expect(redacted.message).not.toContain('PRIVATE');
+      expect((redacted as { cause?: unknown }).cause).toBeUndefined();
+      expect((redacted as { text?: unknown }).text).toBeUndefined();
+    });
+  }
+
+  it('keeps the classified error type so logs and fallback agree', () => {
+    for (const [, error] of cases) {
+      expect(LLM.classifyError(privateModelError(error), 'openrouter:gemini-2.5-flash-lite').constructor).toBe(
+        LLM.classifyError(error, 'openrouter:gemini-2.5-flash-lite').constructor,
+      );
+    }
   });
 });

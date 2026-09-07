@@ -883,6 +883,15 @@ function isReasoningPolicyError(error: unknown): boolean {
   return /reasoning is mandatory/i.test(msg) || /cannot be disabled/i.test(msg);
 }
 
+/**
+ * A call that opts out of recording inputs or outputs must not let provider
+ * payloads leave the process — not through captured requests, not through the
+ * exceptions handed to logging and error telemetry.
+ */
+function isPrivateTelemetry(telemetry: { recordInputs?: boolean; recordOutputs?: boolean } | undefined): boolean {
+  return telemetry?.recordInputs === false || telemetry?.recordOutputs === false;
+}
+
 /** 判断错误是否值得 fallback（429/5xx/timeout/生成失败/reasoning 策略 400），非 retryable 的直接抛 */
 export function isRetryableError(error: unknown): boolean {
   if (error instanceof Oops || error instanceof Oops.Block || error instanceof Oops.Panic) {
@@ -1318,10 +1327,7 @@ export class LLM {
         LLM.captureRequest(id, 'generateObject', modelKey, schema, messages, instructions);
       }
 
-      const languageModel = privateModel(
-        createLanguageModel(modelKey),
-        telemetry.recordInputs === false || telemetry.recordOutputs === false,
-      );
+      const languageModel = privateModel(createLanguageModel(modelKey), isPrivateTelemetry(telemetry));
       const provider = getProvider(modelKey);
       const providerOptions = buildProviderOptions(
         provider,
@@ -1371,8 +1377,7 @@ export class LLM {
       } catch (error) {
         cleanup();
         // SDK errors can contain prompt/response bodies, including in their causes.
-        const safeError =
-          telemetry.recordInputs === false || telemetry.recordOutputs === false ? privateModelError(error) : error;
+        const safeError = isPrivateTelemetry(telemetry) ? privateModelError(error) : error;
         const classified = LLM.classifyError(safeError, modelKey);
         LLM.logError(id, 'generateObject', modelKey, classified);
         throw classified;
@@ -1561,7 +1566,10 @@ export class LLM {
           openrouter: openrouterOptions,
         },
       );
-      const languageModel = createLanguageModelForCall(modelKey, modelIdSuffix);
+      const languageModel = privateModel(
+        createLanguageModelForCall(modelKey, modelIdSuffix),
+        isPrivateTelemetry(telemetry),
+      );
       const provider = getProvider(modelKey);
       const providerOptions = buildProviderOptions(
         provider,
@@ -1620,7 +1628,10 @@ export class LLM {
         };
       } catch (error) {
         cleanup();
-        const classified = LLM.classifyError(error, modelKey);
+        const classified = LLM.classifyError(
+          isPrivateTelemetry(telemetry) ? privateModelError(error) : error,
+          modelKey,
+        );
         LLM.logError(id, 'generateText', modelKey, classified);
         throw classified;
       }
@@ -1685,9 +1696,14 @@ export class LLM {
     }
     LLM.logStart(id, 'streamObject', modelKey, spec.thinking, undefined, spec.vertex?.tier, spec.vertex?.requestType);
     LLM.logInputSummary(id, schema, messages, instructions);
-    LLM.captureRequest(id, 'streamObject', modelKey, schema, messages, instructions);
+    if (telemetry.recordInputs !== false) {
+      LLM.captureRequest(id, 'streamObject', modelKey, schema, messages, instructions);
+    }
 
-    const model = createLanguageModelForCall(modelKey, undefined, { extractJson: true });
+    const model = privateModel(
+      createLanguageModelForCall(modelKey, undefined, { extractJson: true }),
+      isPrivateTelemetry(telemetry),
+    );
 
     const provider = getProvider(modelKey);
     const providerOptions = buildProviderOptions(provider, spec.thinking, modelKey, openrouterOptions, spec.bedrock);
@@ -1727,7 +1743,14 @@ export class LLM {
       {
         cleanup,
         logErrorEvent: (event, result) => {
-          LLM.logErrorEvent(id, 'streamObject', modelKey, event.error, result, aiOptions?.streamRetries);
+          LLM.logErrorEvent(
+            id,
+            'streamObject',
+            modelKey,
+            isPrivateTelemetry(telemetry) ? privateModelError(event.error) : event.error,
+            result,
+            aiOptions?.streamRetries,
+          );
         },
         logSuccess: (event) => {
           LLM.logEnd(
@@ -1747,7 +1770,7 @@ export class LLM {
             .info`[LLM:abort] id=${id}, method=streamObject, model=${modelKey}, duration=${Date.now() - startTime}ms`;
         },
         logFailure: (error) => {
-          LLM.logError(id, 'streamObject', modelKey, error);
+          LLM.logError(id, 'streamObject', modelKey, isPrivateTelemetry(telemetry) ? privateModelError(error) : error);
         },
       },
     );
@@ -1852,10 +1875,7 @@ export class LLM {
     }
     LLM.logStart(id, 'streamText', modelKey, spec.thinking, undefined, spec.vertex?.tier, spec.vertex?.requestType);
 
-    const languageModel = privateModel(
-      createLanguageModelForCall(modelKey, undefined),
-      telemetry.recordInputs === false || telemetry.recordOutputs === false,
-    );
+    const languageModel = privateModel(createLanguageModelForCall(modelKey, undefined), isPrivateTelemetry(telemetry));
     const provider = getProvider(modelKey);
     const providerOptions = buildProviderOptions(provider, spec.thinking, modelKey, openrouterOptions, spec.bedrock);
     const tierHeaders = buildTierHeaders(modelKey, spec.vertex?.tier, spec.vertex?.requestType);
@@ -1902,9 +1922,7 @@ export class LLM {
             id,
             'streamText',
             modelKey,
-            telemetry.recordInputs === false || telemetry.recordOutputs === false
-              ? privateModelError(event.error)
-              : event.error,
+            isPrivateTelemetry(telemetry) ? privateModelError(event.error) : event.error,
             result,
             aiOptions?.streamRetries,
           );
@@ -1927,12 +1945,7 @@ export class LLM {
             .info`[LLM:abort] id=${id}, method=streamText, model=${modelKey}, duration=${Date.now() - startTime}ms`;
         },
         logFailure: (error) => {
-          LLM.logError(
-            id,
-            'streamText',
-            modelKey,
-            telemetry.recordInputs === false || telemetry.recordOutputs === false ? privateModelError(error) : error,
-          );
+          LLM.logError(id, 'streamText', modelKey, isPrivateTelemetry(telemetry) ? privateModelError(error) : error);
         },
       },
     );
@@ -2037,12 +2050,14 @@ export class LLM {
         spec.vertex?.requestType,
       );
       LLM.logInputSummary(id, schema, messages, instructions);
-      LLM.captureRequest(id, 'generateObjectViaTool', modelKey, schema, messages, instructions, {
-        toolName,
-        toolDescription,
-      });
+      if (telemetry.recordInputs !== false) {
+        LLM.captureRequest(id, 'generateObjectViaTool', modelKey, schema, messages, instructions, {
+          toolName,
+          toolDescription,
+        });
+      }
 
-      const languageModel = createLanguageModel(modelKey);
+      const languageModel = privateModel(createLanguageModel(modelKey), isPrivateTelemetry(telemetry));
       const provider = getProvider(modelKey);
       const baseProviderOptions = buildProviderOptions(
         provider,
@@ -2160,7 +2175,10 @@ export class LLM {
         };
       } catch (error) {
         cleanup();
-        const classified = LLM.classifyError(error, modelKey);
+        const classified = LLM.classifyError(
+          isPrivateTelemetry(telemetry) ? privateModelError(error) : error,
+          modelKey,
+        );
         LLM.logError(id, 'generateObjectViaTool', modelKey, classified);
         throw classified;
       }
@@ -2240,7 +2258,7 @@ export class LLM {
       spec.vertex?.requestType,
     );
 
-    const languageModel = createLanguageModel(modelKey);
+    const languageModel = privateModel(createLanguageModel(modelKey), isPrivateTelemetry(telemetry));
     const provider = getProvider(modelKey);
     const providerOptions = buildProviderOptions(provider, spec.thinking, modelKey, openrouterOptions, spec.bedrock);
     const tierHeaders = buildTierHeaders(modelKey, spec.vertex?.tier, spec.vertex?.requestType);
@@ -2274,7 +2292,12 @@ export class LLM {
       runtimeContext: mergeProvenanceRuntimeContext(),
       allowSystemInMessages: allowsSystemInMessages(modelKey),
       onError: ({ error }) => {
-        LLM.logErrorEvent(id, 'streamObjectViaTool', modelKey, error);
+        LLM.logErrorEvent(
+          id,
+          'streamObjectViaTool',
+          modelKey,
+          isPrivateTelemetry(telemetry) ? privateModelError(error) : error,
+        );
       },
     });
 
@@ -2327,7 +2350,12 @@ export class LLM {
       );
       yield { type: 'usage', usage };
     } catch (error) {
-      LLM.logError(id, 'streamObjectViaTool', modelKey, error);
+      LLM.logError(
+        id,
+        'streamObjectViaTool',
+        modelKey,
+        isPrivateTelemetry(telemetry) ? privateModelError(error) : error,
+      );
       throw error;
     } finally {
       cleanup();

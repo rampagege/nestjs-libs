@@ -75,6 +75,8 @@ export function redactHttpUrlForPath(value: string): string {
   return isPrivateHttpPath(value) ? redactPrivateHttpUrl(value) : redactHttpUrl(value);
 }
 
+const REFERRER_HEADER_PATTERN = /^referr?er$/i;
+
 /** Declared private paths keep only a redacted URL and method in error telemetry. */
 export function redactHttpRequestForTelemetry<T extends { url?: string; method?: string; query_string?: unknown }>(
   request: T,
@@ -86,5 +88,63 @@ export function redactHttpRequestForTelemetry<T extends { url?: string; method?:
   if (result.url) result.url = redactHttpUrl(result.url);
   if (typeof result.query_string === 'string') result.query_string = redactQueryString(result.query_string);
   else if (result.query_string !== undefined) delete result.query_string;
+  // An ordinary request can still carry a private authorization link in its referrer.
+  const headers = (result as { headers?: unknown }).headers;
+  if (headers && typeof headers === 'object' && !Array.isArray(headers)) {
+    const copy: Record<string, unknown> = { ...(headers as Record<string, unknown>) };
+    for (const key of Object.keys(copy)) {
+      if (!REFERRER_HEADER_PATTERN.test(key)) continue;
+      const value = copy[key];
+      if (typeof value === 'string') copy[key] = redactHttpUrlForPath(value);
+    }
+    (result as { headers?: unknown }).headers = copy;
+  }
   return result;
+}
+
+/** URL-bearing span attributes across OTel semconv versions. */
+const URL_ATTRIBUTE_KEYS = ['http.url', 'http.target', 'url.full', 'url.path', 'http.request.header.referer'] as const;
+const REFERER_ATTRIBUTE = 'http.request.header.referer';
+
+/** Redact a span's URL attributes in place. */
+export function redactSpanAttributes(attributes: Record<string, unknown> | undefined): void {
+  if (!attributes) return;
+  let privatePath = false;
+  for (const key of URL_ATTRIBUTE_KEYS) {
+    const value = attributes[key];
+    // A referrer names some other page, so it is redacted but never decides this span's tier.
+    if (typeof value === 'string') {
+      if (key !== REFERER_ATTRIBUTE && isPrivateHttpPath(value)) privatePath = true;
+      attributes[key] = redactHttpUrlForPath(value);
+    } else if (Array.isArray(value)) {
+      // Header attributes are arrays under the HTTP semantic conventions.
+      attributes[key] = value.map((entry) => (typeof entry === 'string' ? redactHttpUrlForPath(entry) : entry));
+    }
+  }
+  const query = attributes['url.query'];
+  if (typeof query === 'string') attributes['url.query'] = privatePath ? '[redacted]' : redactQueryString(query);
+}
+
+/**
+ * Redact on the way out, not through `applyCustomAttributesOnSpan`.
+ *
+ * `@opentelemetry/instrumentation-http` runs that hook only when a request
+ * completes normally; `_onOutgoingRequestError` and `_onServerResponseError`
+ * call `setSpanWithError` and close the span directly. A span that ends on an
+ * error would otherwise be exported with its raw URL and query. Wrapping the
+ * processor covers every span and every instrumentation uniformly.
+ */
+export function withSpanRedaction<T extends object>(processor: T): T {
+  return new Proxy(processor, {
+    get(target, property, receiver) {
+      if (property === 'onEnd') {
+        return (span: { attributes?: Record<string, unknown> }) => {
+          redactSpanAttributes(span.attributes);
+          (target as { onEnd?: (span: unknown) => void }).onEnd?.(span);
+        };
+      }
+      const value = Reflect.get(target, property, receiver) as unknown;
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
 }

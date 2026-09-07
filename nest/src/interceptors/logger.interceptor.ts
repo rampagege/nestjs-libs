@@ -32,12 +32,13 @@ export class LoggerInterceptor implements NestInterceptor {
   private readonly logger = getAppLogger('LoggerInterceptor');
 
   public intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> | Promise<Observable<unknown>> {
-    if (
-      Reflect.getMetadata(PRIVATE_PAYLOAD, ctx.getHandler()) ||
-      Reflect.getMetadata(PRIVATE_PAYLOAD, ctx.getClass())
-    ) {
-      return next.handle();
-    }
+    // Private handlers still need the request context (traceId / userId) that
+    // downstream logging, provenance and container spans read; only the payload,
+    // URL and exception detail are withheld from the generic log.
+    const isPrivate = Boolean(
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- boolean OR, not nullish fallback
+      Reflect.getMetadata(PRIVATE_PAYLOAD, ctx.getHandler()) || Reflect.getMetadata(PRIVATE_PAYLOAD, ctx.getClass()),
+    );
     // 注意：Subscription 必须直接返回原始结果，任何额外的 pipe 都会把 AsyncIterator 变成 Observable，
     // 导致 graphql-transport-ws 收到 {} 而不是流式数据。
     // NestJS switchToHttp() 在 GraphQL 场景返回空对象，类型声明为可空
@@ -105,7 +106,7 @@ export class LoggerInterceptor implements NestInterceptor {
       return next.handle();
     }
 
-    const body = normalizePayloadForLog(req.body ?? {});
+    const body = isPrivate ? undefined : normalizePayloadForLog(req.body ?? {});
     // 获取客户端真实 IP：优先使用 Cloudflare cf-connecting-ip，其次 x-forwarded-for，最后 req.ip
     const cfConnectingIp = req.headers['cf-connecting-ip'];
     const realIp =
@@ -115,11 +116,11 @@ export class LoggerInterceptor implements NestInterceptor {
     // CF-Ray 用于 Cloudflare 日志追踪
     const cfRay = req.headers['cf-ray'];
     const info = {
-      path: req.url,
+      path: isPrivate ? '[redacted]' : req.url,
       body,
-      query: req.query,
-      params: req.params,
-      headers: normalizeHeadersForLog(req.headers),
+      query: isPrivate ? undefined : req.query,
+      params: isPrivate ? undefined : req.params,
+      headers: isPrivate ? undefined : normalizeHeadersForLog(req.headers),
       /*
             raw: req.raw,
             id: req.id,
@@ -142,6 +143,7 @@ export class LoggerInterceptor implements NestInterceptor {
     // 健康检查路径，跳过日志记录
 
     const isHealthCheck = req.path.startsWith('/health') || req.path === '/';
+    const skipRequestLogs = isHealthCheck || isPrivate;
 
     const currentSpan = trace.getSpan(context.active());
     const spanTraceId = currentSpan?.spanContext().traceId;
@@ -150,7 +152,7 @@ export class LoggerInterceptor implements NestInterceptor {
     const userIdFromRequest = req.user?.userId;
 
     return RequestContext.run({ traceId, userId: userIdFromRequest ?? null }, () => {
-      if (!isHealthCheck) {
+      if (!skipRequestLogs) {
         this.logger
           .debug`-> ${TAG} call... ip=${ipAddress} cfRay=${cfRay} ${req.method} ${req.url} ua=${req.headers['user-agent']}`;
       }
@@ -158,13 +160,15 @@ export class LoggerInterceptor implements NestInterceptor {
       const now = Date.now();
       return next.handle().pipe(
         finalize(() => {
-          if (!isHealthCheck) {
+          if (!skipRequestLogs) {
             this.logger.debug`<- ${TAG} spent ${Date.now() - now}ms`;
           }
         }),
         catchError((e) => {
+          // A private handler's exception can carry the request payload it was
+          // handling, so it never reaches the generic log.
           const skipNotFound = (e as { status?: number }).status !== 404;
-          if (skipNotFound) {
+          if (skipNotFound && !isPrivate) {
             this.logger.warning`${TAG} ${info}: ${e}`;
           }
           throw e;
