@@ -207,3 +207,72 @@ it('a referrer pointing at a private link is redacted on an ordinary request', (
   expect(headers['user-agent']).toBe('probe');
   expect(JSON.stringify(result)).not.toContain('PRIVATE');
 });
+
+function rpcContext(handler: () => void, data: unknown) {
+  return {
+    getType: () => 'rpc',
+    getHandler: () => handler,
+    getClass: () => Object,
+    // Nest exposes switchToHttp on every context; it yields no request for RPC.
+    switchToHttp: () => ({ getRequest: () => undefined }),
+    switchToRpc: () => ({ getData: () => data, getContext: () => ({}) }),
+  };
+}
+
+/** Any read of the payload means something was about to log it. */
+function watchedPayload() {
+  const state = { read: false };
+  const target = { secret: 'PRIVATE_RPC_BODY' };
+  const trap = () => {
+    state.read = true;
+  };
+  return {
+    state,
+    data: new Proxy(target, {
+      get: (t, p, r) => {
+        trap();
+        return Reflect.get(t, p, r);
+      },
+      ownKeys: (t) => {
+        trap();
+        return Reflect.ownKeys(t);
+      },
+    }),
+  };
+}
+
+it('a private gRPC handler keeps its context and never reads the request payload', async () => {
+  const handler = () => undefined;
+  Reflect.defineMetadata(PRIVATE_PAYLOAD, true, handler);
+  const { state, data } = watchedPayload();
+
+  let traceId: string | undefined;
+  const observable = await new LoggerInterceptor().intercept(
+    rpcContext(handler, data) as never,
+    {
+      handle: () => {
+        traceId = RequestContext.get('traceId');
+        return of('private rpc result');
+      },
+    } as never,
+  );
+  await new Promise((resolve) => (observable as ReturnType<typeof of>).subscribe(resolve));
+
+  expect(traceId).toBeTruthy();
+  expect(state.read).toBe(false);
+});
+
+it('an ordinary gRPC handler still logs its payload', async () => {
+  const handler = () => undefined;
+  const { state, data } = watchedPayload();
+
+  const observable = await new LoggerInterceptor().intercept(
+    rpcContext(handler, data) as never,
+    {
+      handle: () => of('rpc result'),
+    } as never,
+  );
+  await new Promise((resolve) => (observable as ReturnType<typeof of>).subscribe(resolve));
+
+  expect(state.read).toBe(true);
+});

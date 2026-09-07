@@ -95,7 +95,7 @@ export class LoggerInterceptor implements NestInterceptor {
 
     // gRPC request handling
     if (ctx.getType() === 'rpc') {
-      return this.handleRpcRequest(ctx, next);
+      return this.handleRpcRequest(ctx, next, isPrivate);
     }
 
     // ws subscription request - NestJS 某些场景下 req 可能为空
@@ -189,7 +189,7 @@ export class LoggerInterceptor implements NestInterceptor {
    * -> (rpc) #Class.method call... data={...}
    * <- (rpc) #Class.method spent Xms
    */
-  private handleRpcRequest(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
+  private handleRpcRequest(ctx: ExecutionContext, next: CallHandler, isPrivate = false): Observable<unknown> {
     const rpcCtx = ctx.switchToRpc();
     const data = rpcCtx.getData();
     const rpcContext = rpcCtx.getContext();
@@ -202,19 +202,28 @@ export class LoggerInterceptor implements NestInterceptor {
     const traceId = this.extractGrpcTraceId(rpcContext);
 
     return RequestContext.run({ traceId, userId: null }, () => {
-      // Truncate large data for logging (similar to HTTP body truncation)
-      const logSafeData = normalizePayloadForLog(data);
-      this.logger.debug`-> ${TAG} call... data=${logSafeData}`;
+      if (!isPrivate) {
+        // Truncate large data for logging (similar to HTTP body truncation)
+        const logSafeData = normalizePayloadForLog(data);
+        this.logger.debug`-> ${TAG} call... data=${logSafeData}`;
+      }
 
       const now = Date.now();
       return next.handle().pipe(
         finalize(() => {
-          this.logger.debug`<- ${TAG} spent ${Date.now() - now}ms`;
+          if (!isPrivate) {
+            this.logger.debug`<- ${TAG} spent ${Date.now() - now}ms`;
+          }
         }),
         catchError((e) => {
           // 非 fatal OopsError 是预期拒绝（如 MG40001 设备离线），用 warn 级别避免
           // 污染 Sentry/Loki ERROR 信号。Oops.Panic 和 unknown 仍按 error 级别。
-          if (isExpectedOopsError(e)) {
+          //
+          // A private handler's exception can quote the request it was handling,
+          // so the failure stays visible but its content does not.
+          if (isPrivate) {
+            this.logger.warning`${TAG} failed (details withheld)`;
+          } else if (isExpectedOopsError(e)) {
             this.logger.warning`${TAG} expected: ${e}`;
           } else {
             this.logger.error`${TAG} error: ${e}`;

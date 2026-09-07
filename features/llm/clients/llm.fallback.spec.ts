@@ -10,10 +10,11 @@
 
 import 'reflect-metadata';
 
+import { SysEnv } from '@app/env';
 import { Oops } from '@app/nest/exceptions/oops';
 
 import { parseModelSpec } from '../types/model.types';
-import { isRetryableError, LLM } from './llm.class';
+import { formatValidationIssues, isRetryableError, LLM, wrapPrepareStep } from './llm.class';
 import { privateModelError } from './private-model';
 
 import { APICallError, NoObjectGeneratedError, NoOutputGeneratedError } from 'ai';
@@ -21,6 +22,9 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
 import type { OopsError } from '@app/nest/exceptions/oops-error';
+
+// Model construction reads the key; no request is made.
+(SysEnv as unknown as Record<string, string | undefined>).AI_OPENROUTER_API_KEY ??= 'test-openrouter-key';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 假设一：parseModelSpec 能否正确解析 mood-analyzer 的 spec
@@ -319,5 +323,53 @@ describe('privateModelError preserves retry and classification semantics', () =>
         LLM.classifyError(error, 'openrouter:gemini-2.5-flash-lite').constructor,
       );
     }
+  });
+});
+
+describe('privacy travels with every model a call builds', () => {
+  const context = (privateTelemetry: boolean) => ({
+    id: 'test',
+    method: 'streamText',
+    modelSpec: 'openrouter:gemini-2.5-flash-lite' as const,
+    thinking: 'none' as const,
+    privateTelemetry,
+  });
+  // A wrapped model is the plain object wrapLanguageModel returns; a provider
+  // model is a class instance carrying its own settings/config.
+  const isWrapped = (model: unknown) => Object.getPrototypeOf(model) === Object.prototype;
+  const step = wrapPrepareStep(() => ({ llm: { model: 'openrouter:gemini-2.5-flash-lite' } }) as never, context(true));
+  const openStep = wrapPrepareStep(
+    () => ({ llm: { model: 'openrouter:gemini-2.5-flash-lite' } }) as never,
+    context(false),
+  );
+
+  it('a step that switches models keeps the private wrapper', async () => {
+    const result = (await step!({} as never)) as { model: unknown };
+    expect(isWrapped(result.model)).toBe(true);
+  });
+
+  it('a step under ordinary telemetry gets the provider model unchanged', async () => {
+    const result = (await openStep!({} as never)) as { model: unknown };
+    expect(isWrapped(result.model)).toBe(false);
+  });
+});
+
+describe('validation failures do not quote model output when outputs are withheld', () => {
+  const issues = [
+    { path: ['user', 'email'], message: 'Invalid email' },
+    { path: ['note'], message: 'Expected string' },
+  ];
+  const preprocessed = { user: { email: 'PRIVATE_EMAIL' }, note: { body: 'PRIVATE_NOTE' } };
+
+  it('quotes the offending values by default', () => {
+    const text = formatValidationIssues(issues, preprocessed, false);
+    expect(text).toContain('PRIVATE_EMAIL');
+    expect(text).toContain('user.email: Invalid email');
+  });
+
+  it('keeps paths and messages but drops the values when withheld', () => {
+    const text = formatValidationIssues(issues, preprocessed, true);
+    expect(text).toBe('user.email: Invalid email; note: Expected string');
+    expect(text).not.toContain('PRIVATE_');
   });
 });

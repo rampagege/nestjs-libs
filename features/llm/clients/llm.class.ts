@@ -573,9 +573,12 @@ interface ResolveAIOptionsContext {
   thinking: ThinkingEffort;
   openrouter?: OpenRouterModelOptions;
   extractJson?: boolean;
+  /** A step may switch models; the privacy decision has to travel with it. */
+  privateTelemetry?: boolean;
 }
 
-function wrapPrepareStep<TOOLS extends ToolSet, RUNTIME_CONTEXT extends Context>(
+/** @internal exported for testing */
+export function wrapPrepareStep<TOOLS extends ToolSet, RUNTIME_CONTEXT extends Context>(
   prepareStep: LLMPrepareStepFunction<TOOLS, RUNTIME_CONTEXT> | undefined,
   context: ResolveAIOptionsContext,
 ): PrepareStepFunction<TOOLS, RUNTIME_CONTEXT> | undefined {
@@ -620,9 +623,12 @@ function wrapPrepareStep<TOOLS extends ToolSet, RUNTIME_CONTEXT extends Context>
     );
     return {
       ...safe,
-      model: createLanguageModelForCall(stepSpec.key, targetModelIdSuffix, {
-        extractJson: context.extractJson,
-      }),
+      model: privateModel(
+        createLanguageModelForCall(stepSpec.key, targetModelIdSuffix, {
+          extractJson: context.extractJson,
+        }),
+        context.privateTelemetry === true,
+      ),
       providerOptions: buildProviderOptions(
         provider,
         stepSpec.thinking,
@@ -890,6 +896,37 @@ function isReasoningPolicyError(error: unknown): boolean {
  */
 function isPrivateTelemetry(telemetry: { recordInputs?: boolean; recordOutputs?: boolean } | undefined): boolean {
   return telemetry?.recordInputs === false || telemetry?.recordOutputs === false;
+}
+
+/**
+ * Validation issues name the failing path, and normally quote the value that
+ * failed. That value is model output, so a caller that opted out of recording
+ * outputs gets the paths and messages without it.
+ *
+ * @internal exported for testing
+ */
+export function formatValidationIssues(
+  issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }>,
+  preprocessed: unknown,
+  withholdOutput: boolean,
+): string {
+  return issues
+    .slice(0, 5)
+    .map((issue) => {
+      // 从原始输入中提取失败字段的实际值
+      let actual: unknown = preprocessed;
+      for (const seg of issue.path) {
+        if (actual != null && typeof actual === 'object') {
+          actual = (actual as Record<string, unknown>)[String(seg)];
+        } else {
+          actual = undefined;
+          break;
+        }
+      }
+      const actualStr = withholdOutput || actual === undefined ? '' : ` (got ${JSON.stringify(actual)})`;
+      return `${issue.path.join('.')}: ${issue.message}${actualStr}`;
+    })
+    .join('; ');
 }
 
 /** 判断错误是否值得 fallback（429/5xx/timeout/生成失败/reasoning 策略 400），非 retryable 的直接抛 */
@@ -1564,6 +1601,7 @@ export class LLM {
           modelIdSuffix,
           thinking: effectiveThinking,
           openrouter: openrouterOptions,
+          privateTelemetry: isPrivateTelemetry(telemetry),
         },
       );
       const languageModel = privateModel(
@@ -1680,6 +1718,7 @@ export class LLM {
 
     const spec = resolveSpec(modelSpec, callerThinking, callerMaxRetries, callerTimeout);
     const openrouterOptions = resolveOpenRouterCallOptions(spec.openrouter, openrouter);
+    const telemetry: TelemetryOptions<RUNTIME_CONTEXT, TOOLS> = callerTelemetry ?? ai?.telemetry ?? DEFAULT_TELEMETRY;
     const aiOptions = resolveLLMAIOptions<TOOLS, RUNTIME_CONTEXT, LLMStreamTextAIOptions<TOOLS, RUNTIME_CONTEXT>>(ai, {
       id,
       method: 'streamObject',
@@ -1687,9 +1726,8 @@ export class LLM {
       thinking: spec.thinking,
       openrouter: openrouterOptions,
       extractJson: true,
+      privateTelemetry: isPrivateTelemetry(telemetry),
     });
-    const telemetry: TelemetryOptions<RUNTIME_CONTEXT, TOOLS> =
-      callerTelemetry ?? aiOptions?.telemetry ?? DEFAULT_TELEMETRY;
     const { key: modelKey } = spec;
     if (spec.fallbackModels.length > 0) {
       fallbackLogger.warning`[LLM:fallback-ignored] id=${id}, method=streamObject — stream methods do not support fallback, only primary model=${modelKey} will be used. fallback=[${spec.fallbackModels.join(',')}]`;
@@ -1856,6 +1894,7 @@ export class LLM {
 
     const spec = resolveSpec(modelSpec, callerThinking, callerMaxRetries, callerTimeout);
     const openrouterOptions = resolveOpenRouterCallOptions(spec.openrouter, openrouter);
+    const telemetry: TelemetryOptions<RUNTIME_CONTEXT, TOOLS> = callerTelemetry ?? ai?.telemetry ?? DEFAULT_TELEMETRY;
     const aiOptions = resolveLLMAIOptions<
       TOOLS,
       RUNTIME_CONTEXT,
@@ -1866,9 +1905,8 @@ export class LLM {
       modelSpec,
       thinking: spec.thinking,
       openrouter: openrouterOptions,
+      privateTelemetry: isPrivateTelemetry(telemetry),
     });
-    const telemetry: TelemetryOptions<RUNTIME_CONTEXT, TOOLS> =
-      callerTelemetry ?? aiOptions?.telemetry ?? DEFAULT_TELEMETRY;
     const { key: modelKey } = spec;
     if (spec.fallbackModels.length > 0) {
       fallbackLogger.warning`[LLM:fallback-ignored] id=${id}, method=streamText — stream methods do not support fallback, only primary model=${modelKey} will be used. fallback=[${spec.fallbackModels.join(',')}]`;
@@ -2145,27 +2183,17 @@ export class LLM {
         // safeParse 验证：fail fast，不兜底修复
         const parseResult = schema.safeParse(preprocessed);
         if (!parseResult.success) {
-          // 完整打印原始 tool call 输出——这是诊断 validation 失败的关键证据
-          LLM.logger.warning`[LLM:validation-failed] id=${id} rawInput=${JSON.stringify(rawInput)}`;
-          LLM.logger.warning`[LLM:validation-failed] id=${id} preprocessed=${JSON.stringify(preprocessed)}`;
+          // 完整打印原始 tool call 输出——这是诊断 validation 失败的关键证据。
+          // 调用方要求不记录输出时，这里同样不能打印，否则脱敏只是形式。
+          const withholdOutput = isPrivateTelemetry(telemetry);
+          if (!withholdOutput) {
+            LLM.logger.warning`[LLM:validation-failed] id=${id} rawInput=${JSON.stringify(rawInput)}`;
+            LLM.logger.warning`[LLM:validation-failed] id=${id} preprocessed=${JSON.stringify(preprocessed)}`;
+          } else {
+            LLM.logger.warning`[LLM:validation-failed] id=${id} output withheld`;
+          }
 
-          const issues = parseResult.error.issues
-            .slice(0, 5)
-            .map((i) => {
-              // 从原始输入中提取失败字段的实际值
-              let actual: unknown = preprocessed;
-              for (const seg of i.path) {
-                if (actual != null && typeof actual === 'object') {
-                  actual = (actual as Record<string, unknown>)[String(seg)];
-                } else {
-                  actual = undefined;
-                  break;
-                }
-              }
-              const actualStr = actual === undefined ? '' : ` (got ${JSON.stringify(actual)})`;
-              return `${i.path.join('.')}: ${i.message}${actualStr}`;
-            })
-            .join('; ');
+          const issues = formatValidationIssues(parseResult.error.issues, preprocessed, withholdOutput);
           throw Oops.Panic.AIObjectGenerationFailed(modelKey, 'validation-failed', issues);
         }
 
